@@ -3,6 +3,7 @@ import datetime
 from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+from websockets.sync.client import connect, ClientConnection
 
 
 class Message:
@@ -40,25 +41,47 @@ class Message:
 class GCodeInterface:
     """send and receive messages through websockets without blocking the main thread"""
 
+    _socket: ClientConnection
+    _address: str
     _exit_flag: Event
     _thread_executor: ThreadPoolExecutor
     _recv_queue: Queue
     _send_queue: Queue
 
-    def __init__(self):
-
+    def __init__(self, address: str):
         # initialize defaults
         self._recv_queue = Queue()
         self._send_queue = Queue()
         self._exit_flag = Event().set()
 
+        self._address = address
+        if not self._address.startswith("ws://"):
+            self._address = f"ws://{address}"
+
     def __enter__(self):
         """used for context manager syntax"""
-        pass
+
+        # purge lingering messages
+        self._recv_queue = Queue()
+        self._send_queue = Queue()
+
+        # connect to websocket
+        self._socket = connect(self._address)
+
+        # start listening and sending threads
+        self._executor = ThreadPoolExecutor(max_workers=2)
+        self._executor.submit(self._recv_thread)
+        self._executor.submit(self._send_thread)
 
     def __exit__(self):
         """used for context manager syntax"""
-        pass
+
+        try:
+            self._socket.close()
+        except Exception as e:
+            print(f"Warning closing socket: {e}")
+
+        self._executor.shutdown(wait=True)
 
     def _recv_thread(self, exit_flag: Event):
         """run a separate thread for receiving messages"""
