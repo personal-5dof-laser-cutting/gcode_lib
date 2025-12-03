@@ -69,6 +69,7 @@ class GCodeInterface:
         self._socket = connect(self._address)
 
         # start listening and sending threads
+        self._exit_flag.clear()
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._executor.submit(self._recv_thread)
         self._executor.submit(self._send_thread)
@@ -89,7 +90,13 @@ class GCodeInterface:
         thread_name = threading.current_thread().name
 
         while not exit_flag.is_set():
-            pass
+            try:
+                message_content_raw = self._socket.recv()
+                message = Message(message_content_raw)
+                self._recv_queue.put(message)
+            except Exception as e:
+                print(f"Exception in recv thread [{thread_name}]: {e}, closing")
+                self._exit_flag.set()
 
     def _send_thread(self, exit_flag: Event):
         """run a separate thread for sending messages"""
@@ -97,7 +104,12 @@ class GCodeInterface:
         thread_name = threading.current_thread().name
 
         while not exit_flag.is_set():
-            pass
+            try:
+                message = self._send_queue.get()
+                self._socket.send(message.text)  # WARN: not sure about the type here
+            except Exception as e:
+                print(f"Exception in send thread [{thread_name}]: {e}, closing")
+                self._exit_flag.set()
 
     def open(self):
         """fallback for processes without context managers"""
