@@ -4,6 +4,7 @@ from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from websockets.sync.client import connect, ClientConnection
+from typing import Any
 
 
 class Message:
@@ -130,10 +131,10 @@ class GCodeInterface:
         """fallback for processes without context managers"""
         self.__exit__()
 
-    def send(self, message: Message | any):
+    def send(self, message: Message | Any):
         """send any message text through a searate thread"""
 
-        if not isinstance(message, Message)
+        if not isinstance(message, Message):
             message = Message(message)
 
         self._send_queue.put(message)
@@ -141,3 +142,7 @@ class GCodeInterface:
     def recv(self):
         """receive any message text from a seperate thread"""
         return self._recv_queue.get()
+
+if __name__ == "__main__":
+    with GCodeInterface("ws://192.168.0.1") as gif:
+        pass
