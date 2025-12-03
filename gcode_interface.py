@@ -2,6 +2,7 @@ import threading
 import datetime
 from threading import Event
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
 
 class Message:
@@ -41,9 +42,15 @@ class GCodeInterface:
 
     _exit_flag: Event
     _thread_executor: ThreadPoolExecutor
+    _recv_queue: Queue
+    _send_queue: Queue
 
     def __init__(self):
-        pass
+
+        # initialize defaults
+        self._recv_queue = Queue()
+        self._send_queue = Queue()
+        self._exit_flag = Event().set()
 
     def __enter__(self):
         """used for context manager syntax"""
