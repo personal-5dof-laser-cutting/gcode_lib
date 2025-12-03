@@ -140,7 +140,7 @@ class GCodeInterface:
 
     def close(self):
         """fallback for processes without context managers"""
-        return self.__exit__()
+        return self.__exit__(exc_type="manual", exc_value=None, traceback=None)
 
     def send(self, message: Message | Any):
         """send any message text through a searate thread"""
