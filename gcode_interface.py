@@ -7,14 +7,14 @@ from websockets.sync.client import connect, ClientConnection
 
 
 class Message:
-    _timestamp: datetime.Datetime
+    _timestamp: datetime.datetime
     _text: str
-    _raw: any
+    _raw: Any
 
     def __init__(self, arg: str | bytes):
         self.timestamp = datetime.datetime.now()
 
-        if type(arg) == bytes:
+        if isinstance(arg, bytes):
             self.raw = arg
             self.text = arg.decode()
             return
@@ -52,7 +52,8 @@ class GCodeInterface:
         # initialize defaults
         self._recv_queue = Queue()
         self._send_queue = Queue()
-        self._exit_flag = Event().set()
+        self._exit_flag = Event()
+        self._exit_flag.set()
 
         self._address = address
         if not self._address.startswith("ws://"):
@@ -74,8 +75,11 @@ class GCodeInterface:
         self._executor.submit(self._recv_thread)
         self._executor.submit(self._send_thread)
 
-    def __exit__(self):
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any):
         """used for context manager syntax"""
+        self._exit_flag.set()
+        # INFO: this unblocks the get()
+        self._send_queue.put("CLOSE")
 
         try:
             self._socket.close()
@@ -84,12 +88,12 @@ class GCodeInterface:
 
         self._executor.shutdown(wait=True)
 
-    def _recv_thread(self, exit_flag: Event):
+    def _recv_thread(self):
         """run a separate thread for receiving messages"""
 
         thread_name = threading.current_thread().name
 
-        while not exit_flag.is_set():
+        while not self._exit_flag.is_set():
             try:
                 message_content_raw = self._socket.recv()
                 message = Message(message_content_raw)
@@ -97,16 +101,23 @@ class GCodeInterface:
             except Exception as e:
                 print(f"Exception in recv thread [{thread_name}]: {e}, closing")
                 self._exit_flag.set()
+                break
 
-    def _send_thread(self, exit_flag: Event):
+    def _send_thread(self):
         """run a separate thread for sending messages"""
 
         thread_name = threading.current_thread().name
 
-        while not exit_flag.is_set():
+        while not self._exit_flag.is_set():
             try:
                 message = self._send_queue.get()
+
+                if message == "CLOSE":
+                    self._send_queue.task_done()
+                    break
+
                 self._socket.send(message.text)  # WARN: not sure about the type here
+                self._send_queue.task_done()
             except Exception as e:
                 print(f"Exception in send thread [{thread_name}]: {e}, closing")
                 self._exit_flag.set()
@@ -119,10 +130,14 @@ class GCodeInterface:
         """fallback for processes without context managers"""
         self.__exit__()
 
-    def send(self):
+    def send(self, message: Message | any):
         """send any message text through a searate thread"""
-        pass
+
+        if not isinstance(message, Message)
+            message = Message(message)
+
+        self._send_queue.put(message)
 
     def recv(self):
         """receive any message text from a seperate thread"""
-        pass
+        return self._recv_queue.get()
