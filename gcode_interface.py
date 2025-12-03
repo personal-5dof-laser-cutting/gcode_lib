@@ -4,6 +4,7 @@ from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from websockets.sync.client import connect, ClientConnection
+from websockets.exceptions import ConnectionClosedOK
 from typing import Any
 
 
@@ -13,18 +14,17 @@ class Message:
     _raw: Any
 
     def __init__(self, arg: str | bytes):
-        self.timestamp = datetime.datetime.now()
+        self._timestamp = datetime.datetime.now()
 
         if isinstance(arg, bytes):
-            self.raw = arg
-            self.text = arg.decode()
-            return
-
-        try:
-            self.text = str(arg)
-            self.raw = arg
-        except ValueError:
-            raise NotImplementedError(f"Received {type(arg)}")
+            self._raw = arg
+            self._text = arg.decode()
+        else:
+            try:
+                self._text = str(arg)
+                self._raw = arg
+            except ValueError:
+                raise NotImplementedError(f"Received {type(arg)}")
 
     @property
     def text(self):
@@ -37,6 +37,9 @@ class Message:
     @property
     def timestamp(self):
         return self._timestamp
+
+    def __repr__(self):
+        return f"<Message {self.timestamp}, {self.raw=}, {self.text=}>"
 
 
 class GCodeInterface:
@@ -76,6 +79,8 @@ class GCodeInterface:
         self._executor.submit(self._recv_thread)
         self._executor.submit(self._send_thread)
 
+        return self
+
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any):
         """used for context manager syntax"""
         self._exit_flag.set()
@@ -99,6 +104,11 @@ class GCodeInterface:
                 message_content_raw = self._socket.recv()
                 message = Message(message_content_raw)
                 self._recv_queue.put(message)
+
+            except ConnectionClosedOK:
+                self._exit_flag.set()
+                break
+
             except Exception as e:
                 print(f"Exception in recv thread [{thread_name}]: {e}, closing")
                 self._exit_flag.set()
@@ -125,11 +135,12 @@ class GCodeInterface:
 
     def open(self):
         """fallback for processes without context managers"""
-        self.__enter__()
+        return self.__enter__()
+        
 
     def close(self):
         """fallback for processes without context managers"""
-        self.__exit__()
+        return self.__exit__()
 
     def send(self, message: Message | Any):
         """send any message text through a searate thread"""
@@ -141,8 +152,17 @@ class GCodeInterface:
 
     def recv(self):
         """receive any message text from a seperate thread"""
+        if self._recv_queue.empty():
+            return None
         return self._recv_queue.get()
 
+
 if __name__ == "__main__":
-    with GCodeInterface("ws://192.168.0.1") as gif:
-        pass
+    import time
+
+    with GCodeInterface("ws://192.168.0.1:81") as gif:
+        time.sleep(1)
+        message = gif.recv()
+        print(message)
+        time.sleep(1)
+        gif.recv()
