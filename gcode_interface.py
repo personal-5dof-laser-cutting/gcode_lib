@@ -136,7 +136,6 @@ class GCodeInterface:
     def open(self):
         """fallback for processes without context managers"""
         return self.__enter__()
-        
 
     def close(self):
         """fallback for processes without context managers"""
