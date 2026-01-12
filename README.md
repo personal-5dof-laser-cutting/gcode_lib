@@ -5,6 +5,7 @@ A generic serial bridge over websockets supporting non-blocking send and receive
 ## Install
 
 Add with uv: `uv add "gcode_lib @ git+ssh://git@github.com/HCI-BP-25-26/gcode_lib.git@0.1.0"`
+And then import it with `from gcode_interface import GCodeInterface`
 
 ## Usage
 
@@ -37,4 +38,5 @@ except Exception as e:
 finally:
   gif.close()
 ```
+
 
