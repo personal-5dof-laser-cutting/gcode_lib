@@ -2,6 +2,10 @@
 
 A generic serial bridge over websockets supporting non-blocking send and receive operations simultainously via multithreading.
 
+## Install
+
+Add with uv: `uv add "gcode_lib @ git+ssh://git@github.com/HCI-BP-25-26/gcode_lib.git@0.1.0"`
+
 ## Usage
 
 Recommended (context manager):
@@ -33,3 +37,4 @@ except Exception as e:
 finally:
   gif.close()
 ```
+
