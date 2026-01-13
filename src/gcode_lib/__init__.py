@@ -1,4 +1,4 @@
-from .gcode_lib import GCodeInterface
+from .gcode_interface import GCodeInterface
 
 def hello() -> str:
     return "Hello from gcode-lib!"
