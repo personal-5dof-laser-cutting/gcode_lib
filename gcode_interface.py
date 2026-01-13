@@ -1,5 +1,6 @@
 import threading
 import datetime
+import time
 from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
@@ -155,13 +156,23 @@ class GCodeInterface:
             return None
         return self._recv_queue.get()
 
+    def ping(self, message: Message | str = "\n"):
+        """briefly open the connection and send a test message"""
 
-if __name__ == "__main__":
-    import time
+        try:
+            self.open()
+            self.send(message)
 
-    with GCodeInterface("ws://192.168.0.1:81") as gif:
-        time.sleep(1)
-        message = gif.recv()
-        print(message)
-        time.sleep(1)
-        gif.recv()
+            time.sleep(1)
+
+            message = self.recv()
+            if message:
+                self.close()
+                return True
+
+        except TimeoutError:
+            pass
+        finally:
+            self.close()
+
+        return False

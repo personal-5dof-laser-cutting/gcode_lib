@@ -1,4 +1,4 @@
-from prompt_toolkit.widgets import TextArea, Label
+from prompt_toolkit.widgets import TextArea, Label, Frame
 from prompt_toolkit.layout import Dimension, Window
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.application.current import get_app
@@ -11,13 +11,13 @@ class GCodePrompt:
     def __init__(self, destination: Window):
         self.destination = destination
 
-    def handle_submit(self, buffer: Buffer, destination: Window = None):
+    def handle_submit(self, buffer: Buffer):
         command_text = buffer.text
         buffer.text = ""
 
-        if destination:
-            destination.children.append(Label(text=f"> {command_text}"))
-            destination.vertical_scroll = destination.content_height
+        if self.destination:
+            self.destination.children.append(Frame(Label(text=f"> {command_text}")))
+            # self.destination.vertical_scroll = self.destination.content_height
 
         else:
             print(command_text)
