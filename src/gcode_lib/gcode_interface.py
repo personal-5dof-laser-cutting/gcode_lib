@@ -76,9 +76,9 @@ class GCodeInterface:
 
         # start listening and sending threads
         self._exit_flag.clear()
-        self._executor = ThreadPoolExecutor(max_workers=2)
-        self._executor.submit(self._recv_thread)
-        self._executor.submit(self._send_thread)
+        self._thread_executor = ThreadPoolExecutor(max_workers=2)
+        self._thread_executor.submit(self._recv_thread)
+        self._thread_executor.submit(self._send_thread)
 
         return self
 
@@ -93,7 +93,7 @@ class GCodeInterface:
         except Exception as e:
             print(f"Warning closing socket: {e}")
 
-        self._executor.shutdown(wait=True)
+        self._thread_executor.shutdown(wait=True)
 
     def _recv_thread(self):
         """run a separate thread for receiving messages"""
