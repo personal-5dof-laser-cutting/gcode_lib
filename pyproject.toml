@@ -16,4 +16,5 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "ruff>=0.14.11",
+    "websockets>=16.0",
 ]

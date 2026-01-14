@@ -9,40 +9,6 @@ from websockets.exceptions import ConnectionClosedOK
 from typing import Any
 
 
-class Message:
-    _timestamp: datetime.datetime
-    _text: str
-    _raw: Any
-
-    def __init__(self, arg: str | bytes):
-        self._timestamp = datetime.datetime.now()
-
-        if isinstance(arg, bytes):
-            self._raw = arg
-            self._text = arg.decode()
-        else:
-            try:
-                self._text = str(arg)
-                self._raw = arg
-            except ValueError:
-                raise NotImplementedError(f"Received {type(arg)}")
-
-    @property
-    def text(self):
-        return self._text
-
-    @property
-    def raw(self):
-        return self._raw
-
-    @property
-    def timestamp(self):
-        return self._timestamp
-
-    def __repr__(self):
-        return f"<Message {self.timestamp}, {self.raw=}, {self.text=}>"
-
-
 class GCodeInterface:
     """send and receive messages through websockets without blocking the main thread"""
 
@@ -102,9 +68,8 @@ class GCodeInterface:
 
         while not self._exit_flag.is_set():
             try:
-                message_content_raw = self._socket.recv()
-                message = Message(message_content_raw)
-                self._recv_queue.put(message)
+                response = self._socket.recv()
+                self._recv_queue.put(response)
 
             except ConnectionClosedOK:
                 self._exit_flag.set()
@@ -128,7 +93,7 @@ class GCodeInterface:
                     self._send_queue.task_done()
                     break
 
-                self._socket.send(message.text)  # WARN: not sure about the type here
+                self._socket.send(message)
                 self._send_queue.task_done()
             except Exception as e:
                 print(f"Exception in send thread [{thread_name}]: {e}, closing")
@@ -142,21 +107,54 @@ class GCodeInterface:
         """fallback for processes without context managers"""
         return self.__exit__(exc_type="manual", exc_value=None, traceback=None)
 
-    def send(self, message: Message | Any):
+    def send(self, message: str):
         """send any message text through a searate thread"""
 
-        if not isinstance(message, Message):
-            message = Message(message)
+        message = message.strip() + "\n"
 
         self._send_queue.put(message)
 
-    def recv(self):
-        """receive any message text from a seperate thread"""
-        if self._recv_queue.empty():
-            return None
-        return self._recv_queue.get()
+    def recv(self, timeout: float = None):
+        """receive any message text from a separate thread"""
+        try:
+            if timeout is None:
+                response = self._recv_queue.get_nowait()
+            else:
+                response = self._recv_queue.get(timeout=timeout)
+            
+            if isinstance(response, bytes):
+                response = response.decode().strip()
+                
+            self._recv_queue.task_done()
+            
+            return response
 
-    def ping(self, message: Message | str = "\n"):
+        except: 
+            return None
+
+    def send_and_recv(self, message, delimiter="ok"):
+        """send a message and read the response"""
+
+        # clear recv queue
+
+        while self.recv():
+            pass
+
+        self.send(message)
+
+        response = None
+        full_response = []
+
+        while True:
+            response = self.recv(timeout = 1)
+            full_response.append(response)
+
+            if delimiter in response.lower():
+                break
+
+        return "\n".join(full_response)
+
+    def ping(self, message: str = "\n"):
         """briefly open the connection and send a test message"""
 
         try:
