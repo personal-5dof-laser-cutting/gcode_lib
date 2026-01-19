@@ -121,15 +121,15 @@ class GCodeInterface:
                 response = self._recv_queue.get_nowait()
             else:
                 response = self._recv_queue.get(timeout=timeout)
-            
+
             if isinstance(response, bytes):
                 response = response.decode().strip()
-                
+
             self._recv_queue.task_done()
-            
+
             return response
 
-        except: 
+        except:
             return None
 
     def send_and_recv(self, message, delimiter="ok"):
@@ -146,8 +146,11 @@ class GCodeInterface:
         full_response = []
 
         while True:
-            response = self.recv(timeout = 1)
+            response = self.recv(timeout=1)
             full_response.append(response)
+
+            if not response:
+                continue
 
             if delimiter in response.lower():
                 break
