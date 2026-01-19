@@ -1,3 +1,4 @@
+import logging
 import threading
 import datetime
 import time
@@ -8,6 +9,7 @@ from websockets.sync.client import connect, ClientConnection
 from websockets.exceptions import ConnectionClosedOK
 from typing import Any
 
+log = logging.getLogger(__name__)
 
 class GCodeInterface:
     """send and receive messages through websockets without blocking the main thread"""
@@ -30,15 +32,25 @@ class GCodeInterface:
         if not self._address.startswith("ws://"):
             self._address = f"ws://{address}"
 
+        log.debug(f"% Initialized GCodeInterface for {self._address}")
+
     def __enter__(self):
         """used for context manager syntax"""
+
+        log.info(f"= Connecting to {self._address}...")
 
         # purge lingering messages
         self._recv_queue = Queue()
         self._send_queue = Queue()
 
-        # connect to websocket
-        self._socket = connect(self._address)
+        try:
+
+            # connect to websocket
+            self._socket = connect(self._address)
+            log.info("% Successfully connected to websocket.")
+        except Exception as e:
+            log.error(f"! Failed to connect to {self._address}: {e}")
+            raise
 
         # start listening and sending threads
         self._exit_flag.clear()
@@ -57,26 +69,31 @@ class GCodeInterface:
         try:
             self._socket.close()
         except Exception as e:
-            print(f"Warning closing socket: {e}")
+            log.warning(f"! Error during socket closure: {e}")
+            
 
         self._thread_executor.shutdown(wait=True)
+        log.debug("% Thread executor shut down successfully.")
 
     def _recv_thread(self):
         """run a separate thread for receiving messages"""
 
         thread_name = threading.current_thread().name
+        log.debug(f"% Receiver thread [{thread_name}] started.")
 
         while not self._exit_flag.is_set():
             try:
                 response = self._socket.recv()
                 self._recv_queue.put(response)
+                log.debug(f"< Message received: {response}")
 
             except ConnectionClosedOK:
                 self._exit_flag.set()
+                log.info("% Websocket connection closed normally.")
                 break
 
             except Exception as e:
-                print(f"Exception in recv thread [{thread_name}]: {e}, closing")
+                log.exception(f"! Unexpected error in recv thread: {e}")
                 self._exit_flag.set()
                 break
 
@@ -84,19 +101,22 @@ class GCodeInterface:
         """run a separate thread for sending messages"""
 
         thread_name = threading.current_thread().name
+        log.debug(f"% Sender thread [{thread_name}] started.")
 
         while not self._exit_flag.is_set():
             try:
                 message = self._send_queue.get()
 
                 if message == "CLOSE":
+                    log.debug("% Received internal CLOSE signal for sender thread.")
                     self._send_queue.task_done()
                     break
 
                 self._socket.send(message)
+                log.debug(f"> Message sent: {message.strip()}")
                 self._send_queue.task_done()
             except Exception as e:
-                print(f"Exception in send thread [{thread_name}]: {e}, closing")
+                log.error(f"! Exception in send thread [{thread_name}]: {e}, closing")
                 self._exit_flag.set()
 
     def open(self):
@@ -111,6 +131,7 @@ class GCodeInterface:
         """send any message text through a searate thread"""
 
         message = message.strip() + "\n"
+        log.debug(f"> Queueing message: {message.strip()}")
 
         self._send_queue.put(message)
 
@@ -127,53 +148,80 @@ class GCodeInterface:
 
             self._recv_queue.task_done()
 
+            log.debug(f"< Chunk received: {response}")
             return response
 
         except:
             return None
 
-    def send_and_recv(self, message, delimiter="ok"):
-        """send a message and read the response"""
+    def send_and_recv(self, message: str, delimiter: str = "ok", recv_retries: int = 64):
+        """Send a message and read the response until the delimiter is found."""
 
-        # clear recv queue
-
+        purged_count = 0
         while self.recv():
-            pass
+            purged_count += 1
+        if purged_count > 0:
+            log.debug(f"% Purged {purged_count} lingering messages from queue.")
 
         self.send(message)
 
-        response = None
         full_response = []
+        found_delimiter = False
 
-        while True:
-            response = self.recv(timeout=1)
-            full_response.append(response)
-
-            if not response:
+        for i in range(recv_retries):
+            response = self.recv(timeout=1.0)
+            
+            if response:
+                full_response.append(response)
+                
+                if delimiter.lower() in response.lower():
+                    log.debug("% Delimiter found.")
+                    found_delimiter = True
+                    break
+            else:
                 continue
 
-            if delimiter in response.lower():
-                break
+        combined_result = "\n".join(full_response)
 
-        return "\n".join(full_response)
+        if not found_delimiter:
+            log.warning(
+                f"! Timeout waiting for delimiter '{delimiter}'. "
+                f"! Retries exhausted ({recv_retries}s). "
+                f"! Partial response: {combined_result.strip()}"
+            )
+        else:
+            log.debug(f"Complete response: {combined_result.strip()}")
 
-    def ping(self, message: str = "\n"):
-        """briefly open the connection and send a test message"""
+        return combined_result
 
+    def ping(self, message: str = "M115", timeout: float = 2.0) -> bool:
+        """
+        Briefly checks if the connection is alive. 
+        If closed, it opens and closes it. If already open, it just sends the test.
+        """
+        # Track if we opened it just for this ping so we know whether to close it
+        was_already_open = not self._exit_flag.is_set()
+
+
+        
         try:
-            self.open()
-            self.send(message)
+            if not was_already_open:
+                log.debug("% Ping: Interface not open. Opening temporary connection.")
+                self.open()
 
-            time.sleep(1)
+            response = self.send_and_recv(message)
 
-            message = self.recv()
-            if message:
-                self.close()
+            if response and len(response.strip()) > 0:
+                log.info(f"< Ping successful: Received response.")
                 return True
+            
+            log.warning("! Ping failed: No response received.")
+            return False
 
-        except TimeoutError:
-            pass
+        except Exception as e:
+            log.error(f"! Ping failed with exception: {e}")
+            return False
         finally:
-            self.close()
-
-        return False
+            if not was_already_open:
+                log.debug("% Ping: Closing temporary connection.")
+                self.close()

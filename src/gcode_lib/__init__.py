@@ -1,5 +1,4 @@
 from .gcode_interface import GCodeInterface
 
-
-def hello() -> str:
-    return "Hello from gcode-lib!"
+import logging
+logging.getLogger(__name__).addHandler(logging.NullHandler())
