@@ -11,6 +11,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+
 class GCodeInterface:
     """send and receive messages through websockets without blocking the main thread"""
 
@@ -20,13 +21,15 @@ class GCodeInterface:
     _thread_executor: ThreadPoolExecutor
     _recv_queue: Queue
     _send_queue: Queue
+    _message_blacklist: list[str]
 
-    def __init__(self, address: str):
+    def __init__(self, address: str, message_blacklist: list[str] = list()):
         # initialize defaults
         self._recv_queue = Queue()
         self._send_queue = Queue()
         self._exit_flag = Event()
         self._exit_flag.set()
+        self._message_blacklist = message_blacklist
 
         self._address = address
         if not self._address.startswith("ws://"):
@@ -44,7 +47,6 @@ class GCodeInterface:
         self._send_queue = Queue()
 
         try:
-
             # connect to websocket
             self._socket = connect(self._address)
             log.info("% Successfully connected to websocket.")
@@ -70,7 +72,6 @@ class GCodeInterface:
             self._socket.close()
         except Exception as e:
             log.warning(f"! Error during socket closure: {e}")
-            
 
         self._thread_executor.shutdown(wait=True)
         log.debug("% Thread executor shut down successfully.")
@@ -84,8 +85,12 @@ class GCodeInterface:
         while not self._exit_flag.is_set():
             try:
                 response = self._socket.recv()
-                self._recv_queue.put(response)
-                log.debug(f"< Message received: {response}")
+
+                if not response in self._message_blacklist:
+                    self._recv_queue.put(response)
+                    log.debug(f"< Message received: {response}")
+                else:
+                    log.debug(f"% Message iggnored: {response}")
 
             except ConnectionClosedOK:
                 self._exit_flag.set()
@@ -154,7 +159,9 @@ class GCodeInterface:
         except:
             return None
 
-    def send_and_recv(self, message: str, delimiter: str = "ok", recv_retries: int = 64):
+    def send_and_recv(
+        self, message: str, delimiter: str = "ok", recv_retries: int = 64
+    ):
         """Send a message and read the response until the delimiter is found."""
 
         purged_count = 0
@@ -170,10 +177,10 @@ class GCodeInterface:
 
         for i in range(recv_retries):
             response = self.recv(timeout=1.0)
-            
+
             if response:
                 full_response.append(response)
-                
+
                 if delimiter.lower() in response.lower():
                     log.debug("% Delimiter found.")
                     found_delimiter = True
@@ -196,14 +203,12 @@ class GCodeInterface:
 
     def ping(self, message: str = "M115", timeout: float = 2.0) -> bool:
         """
-        Briefly checks if the connection is alive. 
+        Briefly checks if the connection is alive.
         If closed, it opens and closes it. If already open, it just sends the test.
         """
         # Track if we opened it just for this ping so we know whether to close it
         was_already_open = not self._exit_flag.is_set()
 
-
-        
         try:
             if not was_already_open:
                 log.debug("% Ping: Interface not open. Opening temporary connection.")
@@ -214,7 +219,7 @@ class GCodeInterface:
             if response and len(response.strip()) > 0:
                 log.info(f"< Ping successful: Received response.")
                 return True
-            
+
             log.warning("! Ping failed: No response received.")
             return False
 
