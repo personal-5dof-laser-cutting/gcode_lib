@@ -175,8 +175,12 @@ class GCodeInterface:
         full_response = []
         found_delimiter = False
 
-        for i in range(recv_retries):
+        while recv_retries > 0:
             response = self.recv(timeout=1.0)
+
+            if not response:
+                log.debug(f"Received empty response ({recv_retries} retries remaining.)")
+                recv_retries -= 1
 
             if response:
                 full_response.append(response)
