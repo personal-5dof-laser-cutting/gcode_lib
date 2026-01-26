@@ -179,7 +179,7 @@ class GCodeInterface:
             response = self.recv(timeout=1.0)
 
             if not response:
-                log.debug(f"Received empty response ({recv_retries} retries remaining.)")
+                # log.debug(f"Received empty response ({recv_retries} retries remaining.)")
                 recv_retries -= 1
 
             if response:
