@@ -135,7 +135,7 @@ class GCodeInterface:
     def send(self, message: str):
         """send any message text through a searate thread"""
 
-        message = message.strip() + "\n"
+        message = message.strip("\n") + "\n"
         log.debug(f"> Queueing message: {message.strip()}")
 
         self._send_queue.put(message)
@@ -149,7 +149,7 @@ class GCodeInterface:
                 response = self._recv_queue.get(timeout=timeout)
 
             if isinstance(response, bytes):
-                response = response.decode().strip()
+                response = response.decode()
 
             self._recv_queue.task_done()
 
