@@ -27,7 +27,7 @@ class CommunicationWorker(multiprocessing.Process):
         Parameters
         ----------
         driver : CommunicationInterface
-            The underlying hardware driver. 
+            The underlying hardware driver.
         timeout_sec : float, default 0.5
             Maximum seconds allowed between heartbeats before shutoff.
         """
@@ -61,7 +61,9 @@ class CommunicationWorker(multiprocessing.Process):
                     self.driver.send(cmd)
 
             except queue.Empty:
-                log.error("Watchdog timeout! Main process unresponsive. Triggering E-STOP.")
+                log.error(
+                    "Watchdog timeout! Main process unresponsive. Triggering E-STOP."
+                )
                 self.trigger_safety_shutdown()
                 break
 
@@ -89,6 +91,8 @@ class CommunicationWorker(multiprocessing.Process):
 
     def trigger_safety_shutdown(self):
         """Immediately stop the machine and terminate the driver connection."""
-        self.driver.send_message(self.driver.safety_shutoff_command, respect_buffer=False)
+        self.driver.send_message(
+            self.driver.safety_shutoff_command, respect_buffer=False
+        )
         time.sleep(0.1)
         self.driver.terminate()

@@ -13,17 +13,17 @@ class CommunicationInterface(ABC):
     def connect(self):
         """Establish a connection using the detected channel."""
         pass
-            
+
     @abstractmethod
     def close(self):
         """Close the connection gracefully and wait for confirmation."""
         pass
-    
+
     @abstractmethod
     def terminate(self):
         """Send the termination signal and exit."""
         pass
-    
+
     @abstractmethod
     def queue_message(self, message: str):
         """
@@ -49,7 +49,7 @@ class CommunicationInterface(ABC):
             If True, wait for space in the remote buffer before sending.
         """
         pass
-    
+
     @abstractmethod
     def send(self, message: str):
         """
@@ -61,7 +61,7 @@ class CommunicationInterface(ABC):
             The message to send.
         """
         pass
-    
+
     @abstractmethod
     def read_message(self) -> Optional[str]:
         """
@@ -73,9 +73,3 @@ class CommunicationInterface(ABC):
             The message if the buffer is not empty, otherwise None.
         """
         pass
-
-
-
-
-
-

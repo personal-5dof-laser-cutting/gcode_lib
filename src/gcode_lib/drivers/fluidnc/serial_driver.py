@@ -20,7 +20,9 @@ class FluidNCSerialDriver(CommunicationInterface):
     _recv_queue: Queue
     _serial: Optional[serial.Serial]
 
-    def __init__(self, port: str, baudrate: int = 115200, safety_shutoff_command: str = "\x18"):
+    def __init__(
+        self, port: str, baudrate: int = 115200, safety_shutoff_command: str = "\x18"
+    ):
         """
         Initialize the serial driver.
 
@@ -50,9 +52,10 @@ class FluidNCSerialDriver(CommunicationInterface):
             log.warning("Serial connection on %s is already active.", self._port)
             return
 
-        log.info("Connecting to serial port %s at %d baud...", self._port, self._baudrate)
+        log.info(
+            "Connecting to serial port %s at %d baud...", self._port, self._baudrate
+        )
         try:
-            
             # Short timeout so read_message returns None non-blockingly when empty
             self._serial = serial.Serial(
                 port=self._port,
@@ -109,7 +112,9 @@ class FluidNCSerialDriver(CommunicationInterface):
             If True, wait for space in the remote buffer before sending.
         """
         if self._serial is None or not self._serial.is_open:
-            log.error("Cannot send message: Serial port %s is not connected.", self._port)
+            log.error(
+                "Cannot send message: Serial port %s is not connected.", self._port
+            )
             return
 
         try:
@@ -130,11 +135,12 @@ class FluidNCSerialDriver(CommunicationInterface):
             The message to send.
         """
         if self._serial is None or not self._serial.is_open:
-            log.error("Cannot send message: Serial port %s is not connected.", self._port)
+            log.error(
+                "Cannot send message: Serial port %s is not connected.", self._port
+            )
             return
 
         # TODO: get a list of in-band commands from the corgi
-
 
     def read_message(self) -> Optional[str]:
         """

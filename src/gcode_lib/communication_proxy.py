@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 class CommunicationProxy(CommunicationInterface):
     """
     Main-process proxy that implements CommunicationInterface.
-    
+
     Forwards commands over IPC to a CommunicationWorker process
     and maintains the watchdog heartbeat.
     """
@@ -21,10 +21,10 @@ class CommunicationProxy(CommunicationInterface):
     def __init__(self, driver: CommunicationInterface, heartbeat_interval: float = 0.2):
         self._driver = driver
         self._heartbeat_interval = heartbeat_interval
-        
+
         # Initialize the background process
         self._worker = CommunicationWorker(driver=self._driver)
-        
+
         # Heartbeat thread control
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._stop_heartbeat = threading.Event()
@@ -32,12 +32,11 @@ class CommunicationProxy(CommunicationInterface):
     def connect(self):
         """Start the worker process and launch the main process heartbeat thread."""
         self._worker.start()
-        
+
         # Start sending heartbeats from the main process
         self._stop_heartbeat.clear()
         self._heartbeat_thread = threading.Thread(
-            target=self._run_heartbeat, 
-            daemon=True
+            target=self._run_heartbeat, daemon=True
         )
         self._heartbeat_thread.start()
 
@@ -52,7 +51,7 @@ class CommunicationProxy(CommunicationInterface):
         self._stop_heartbeat.set()
         if self._heartbeat_thread and self._heartbeat_thread.is_alive():
             self._heartbeat_thread.join(timeout=1.0)
-            
+
         self._worker.cmd_queue.put("SHUTDOWN")
         self._worker.join(timeout=2.0)
 
