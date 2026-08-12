@@ -78,3 +78,16 @@ class CommunicationProxy(CommunicationInterface):
             return self._worker.response_queue.get_nowait()
         except Empty:
             return None
+
+    def get_state(self) -> Optional[str]:
+        """Request state updating or query the underlying driver state."""
+        self._worker.cmd_queue.put(("GET_STATE",))
+
+    def setup_reporting(self):
+        """Forward status/telemetry setup command to the worker process."""
+        self._worker.cmd_queue.put(("SETUP_REPORTING",))
+
+    @property
+    def safety_shutoff_command(self) -> str:
+        """Retrieve the static safety shutoff command sequence directly from the driver."""
+        return self._driver.safety_shutoff_command

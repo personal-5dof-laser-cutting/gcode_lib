@@ -1,4 +1,5 @@
 import logging
+import time
 from queue import Queue
 from typing import Optional
 
@@ -56,7 +57,6 @@ class FluidNCSerialDriver(CommunicationInterface):
             "Connecting to serial port %s at %d baud...", self._port, self._baudrate
         )
         try:
-            # Short timeout so read_message returns None non-blockingly when empty
             self._serial = serial.Serial(
                 port=self._port,
                 baudrate=self._baudrate,
@@ -141,6 +141,7 @@ class FluidNCSerialDriver(CommunicationInterface):
             return
 
         # TODO: get a list of in-band commands from the corgi
+        pass
 
     def read_message(self) -> Optional[str]:
         """
@@ -154,7 +155,6 @@ class FluidNCSerialDriver(CommunicationInterface):
         if not self._recv_queue.empty():
             return self._recv_queue.get_nowait()
 
-        # TODO: does this behaviour make sense?
         if self._serial is None or not self._serial.is_open:
             return None
 
@@ -171,6 +171,65 @@ class FluidNCSerialDriver(CommunicationInterface):
             return None
 
         return None
+
+    def get_state(self) -> Optional[str]:
+        """
+        Query the current state of the FluidNC controller.
+
+        Sends the real-time '?' command and waits for the status report.
+        Non-status messages received during this time are queued for read_message().
+
+        Returns
+        -------
+        str or None
+            The status report string (e.g., '<Idle|MPos:0.000,0.000,0.000|Bf:15,128>'),
+            or None if the request timed out or failed.
+        """
+        if self._serial is None or not self._serial.is_open:
+            return None
+
+        try:
+            self._serial.write(b"?")
+            self._serial.flush()
+        except Exception as e:
+            log.error("Failed to send state query: %s", e)
+            return None
+
+        timeout_time = time.time() + 0.5
+        while time.time() < timeout_time:
+            try:
+                if self._serial.in_waiting > 0:
+                    line = (
+                        self._serial.readline()
+                        .decode("utf-8", errors="replace")
+                        .strip()
+                    )
+                    if line.startswith("<") and line.endswith(">"):
+                        return line
+                    elif line:
+                        self._recv_queue.put(line)
+            except SerialException as e:
+                log.error("Serial error while waiting for state: %s", e)
+                break
+            except Exception as e:
+                log.error("Unexpected error waiting for state: %s", e)
+                break
+
+            time.sleep(0.01)
+
+        log.warning("Timeout waiting for state response from FluidNC.")
+        return None
+
+    def setup_reporting(self):
+        """
+        Configure the controller to auto-report the required state information.
+
+        Sets the $10 status report mask. In FluidNC/GRBL, setting bit 1 (value 2)
+        enables the buffer state report. Machine position (MPos) and state (Idle/Run/Alarm)
+        are always included by default.
+        """
+        log.info("Configuring FluidNC status reporting mask ($10=2)...")
+        self.send_message("$10=2\n", respect_buffer=False)
 
     @property
     def safety_shutoff_command(self) -> str:
