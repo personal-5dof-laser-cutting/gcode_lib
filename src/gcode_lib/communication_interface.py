@@ -73,3 +73,30 @@ class CommunicationInterface(ABC):
             The message if the buffer is not empty, otherwise None.
         """
         pass
+
+    @abstractmethod
+    def get_state(self) -> Optional[str]:
+        """
+        Retrieve the current operational or connection state of the interface.
+
+        Returns
+        -------
+        Any
+            The interface's state representation (e.g., Enum, str, or dict).
+        """
+        pass
+
+    @abstractmethod
+    def setup_reporting(self):
+        """
+        Initialize and configure status, diagnostic, or telemetry reporting.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def safety_shutoff_command(self) -> str:
+        """
+        str : The specific command sequence required to trigger an immediate safety shutoff.
+        """
+        pass
