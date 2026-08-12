@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 
 # WARN: not all features implemented, see serial_driver
 
+
 class FluidNCWebsocketsDriver(CommunicationInterface):
     """WebSockets communication driver for FluidNC."""
 

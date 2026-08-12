@@ -29,7 +29,7 @@ class CommunicationProxy(CommunicationInterface):
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._stop_heartbeat = threading.Event()
 
-    def connect(self):
+    def connect(self, setup_reporting: bool = True):
         """Start the worker process and launch the main process heartbeat thread."""
         self._worker.start()
 
@@ -39,6 +39,9 @@ class CommunicationProxy(CommunicationInterface):
             target=self._run_heartbeat, daemon=True
         )
         self._heartbeat_thread.start()
+
+        if setup_reporting:
+            self.setup_reporting()
 
     def _run_heartbeat(self):
         """Loop running in the main process to keep the watchdog alive."""
