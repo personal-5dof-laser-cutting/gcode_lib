@@ -3,7 +3,8 @@ import time
 import logging
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG,
+    format="%(asctime)s - %(filename)-25s %(levelname)-8s %(message)s",
 )
 
 log = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ if __name__ == "__main__":
 
     log.info("Connecting")
     proxy.connect(setup_reporting=False)
+    time.sleep(5)
     log.info("Sending Message")
     proxy.send_message("?")
     time.sleep(5)
