@@ -22,7 +22,6 @@ class CommunicationProxy(CommunicationInterface):
         self._driver = driver
         self._heartbeat_interval = heartbeat_interval
 
-        # Initialize the background process
         self._worker = CommunicationWorker(driver=self._driver)
 
         # Heartbeat thread control
@@ -33,7 +32,6 @@ class CommunicationProxy(CommunicationInterface):
         """Start the worker process and launch the main process heartbeat thread."""
         self._worker.start()
 
-        # Start sending heartbeats from the main process
         self._stop_heartbeat.clear()
         self._heartbeat_thread = threading.Thread(
             target=self._run_heartbeat, daemon=True
