@@ -28,10 +28,17 @@ class CommunicationProxy(CommunicationInterface):
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._stop_heartbeat = threading.Event()
 
+        log.debug(
+            "CommunicationProxy initialized with heartbeat_interval=%.3fs",
+            heartbeat_interval,
+        )
+
     def connect(self, setup_reporting: bool = True):
         """Start the worker process and launch the main process heartbeat thread."""
+        log.info("Starting CommunicationWorker process...")
         self._worker.start()
 
+        log.debug("Starting main process heartbeat thread.")
         self._stop_heartbeat.clear()
         self._heartbeat_thread = threading.Thread(
             target=self._run_heartbeat, daemon=True
@@ -39,53 +46,77 @@ class CommunicationProxy(CommunicationInterface):
         self._heartbeat_thread.start()
 
         if setup_reporting:
+            log.debug("Triggering initial reporting setup.")
             self.setup_reporting()
 
     def _run_heartbeat(self):
         """Loop running in the main process to keep the watchdog alive."""
+        log.debug("Heartbeat thread loop active.")
         while not self._stop_heartbeat.is_set():
             self._worker.cmd_queue.put("HEARTBEAT")
             time.sleep(self._heartbeat_interval)
+        log.debug("Heartbeat thread loop terminated.")
 
     def close(self):
         """Gracefully close the heartbeat thread and shutdown worker process."""
+        log.info("Closing CommunicationProxy gracefully...")
         self._stop_heartbeat.set()
+
         if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            log.debug("Waiting for heartbeat thread to join...")
             self._heartbeat_thread.join(timeout=1.0)
 
+        log.debug("Sending SHUTDOWN command to worker process.")
         self._worker.cmd_queue.put("SHUTDOWN")
+
+        log.debug("Waiting for worker process to join...")
         self._worker.join(timeout=2.0)
+        log.info("CommunicationProxy closed.")
 
     def terminate(self):
         """Immediately kill the worker process."""
+        log.warning("Terminating CommunicationProxy immediately!")
         self._stop_heartbeat.set()
         self._worker.terminate()
+        log.info("CommunicationProxy terminated.")
 
     def queue_message(self, message: str):
         """Enqueue a message to be sent asynchronously."""
+        log.debug("Queueing message to worker: %r", message)
         self._worker.cmd_queue.put(("QUEUE", message))
 
     def send_message(self, message: str, respect_buffer: bool = True):
         """Send a command directly to the worker process."""
+        log.debug(
+            "Sending message directly to worker (respect_buffer=%s): %r",
+            respect_buffer,
+            message,
+        )
         self._worker.cmd_queue.put(("SEND_MESSAGE", message, respect_buffer))
 
     def send(self, message: str):
         """Infer message type and forward to worker process."""
+        log.debug("Sending message with inferred routing to worker: %r", message)
         self._worker.cmd_queue.put(("SEND", message))
 
     def read_message(self) -> Optional[str]:
         """Fetch an incoming message from the worker's response queue without blocking."""
         try:
-            return self._worker.response_queue.get_nowait()
+            msg = self._worker.response_queue.get_nowait()
+            log.debug("Read message from worker response queue: %r", msg)
+            return msg
         except Empty:
+            # We don't log here to avoid spamming the console on empty polls
             return None
 
     def get_state(self) -> Optional[str]:
         """Request state updating or query the underlying driver state."""
+        log.debug("Requesting GET_STATE from worker.")
         self._worker.cmd_queue.put(("GET_STATE",))
 
     def setup_reporting(self):
         """Forward status/telemetry setup command to the worker process."""
+        log.debug("Requesting SETUP_REPORTING from worker.")
         self._worker.cmd_queue.put(("SETUP_REPORTING",))
 
     @property
