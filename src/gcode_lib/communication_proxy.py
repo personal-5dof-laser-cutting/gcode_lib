@@ -101,6 +101,7 @@ class CommunicationProxy(CommunicationInterface):
 
     def read_message(self) -> Optional[str]:
         """Fetch an incoming message from the worker's response queue without blocking."""
+        log.debug("Trying to read message")
         try:
             msg = self._worker.response_queue.get_nowait()
             log.debug("Read message from worker response queue: %r", msg)
