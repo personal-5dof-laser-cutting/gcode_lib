@@ -1,13 +1,9 @@
 from abc import ABC, abstractmethod
-from queue import Queue
 from typing import Optional
 
 
-class CommunicationInterface(ABC):
+class DriverInterface(ABC):
     """Base class for communication interfaces."""
-
-    _send_queue: Queue
-    _recv_queue: Queue
 
     @abstractmethod
     def connect(self):
@@ -24,17 +20,6 @@ class CommunicationInterface(ABC):
         """Send the termination signal and exit."""
         pass
 
-    @abstractmethod
-    def queue_message(self, message: str):
-        """
-        Add a message to the send queue.
-
-        Parameters
-        ----------
-        message : str
-            The message to add.
-        """
-        pass
 
     @abstractmethod
     def send_message(self, message: str, respect_buffer: bool = True):
@@ -75,18 +60,6 @@ class CommunicationInterface(ABC):
         pass
 
     @abstractmethod
-    def get_state(self) -> Optional[str]:
-        """
-        Retrieve the current operational or connection state of the interface.
-
-        Returns
-        -------
-        Any
-            The interface's state representation (e.g., Enum, str, or dict).
-        """
-        pass
-
-    @abstractmethod
     def setup_reporting(self):
         """
         Initialize and configure status, diagnostic, or telemetry reporting.
@@ -100,3 +73,4 @@ class CommunicationInterface(ABC):
         str : The specific command sequence required to trigger an immediate safety shutoff.
         """
         pass
+

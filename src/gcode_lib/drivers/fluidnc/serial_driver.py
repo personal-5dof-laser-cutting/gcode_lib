@@ -5,18 +5,11 @@ from typing import Optional
 import serial
 from serial import SerialException, SerialTimeoutException
 
-from gcode_lib.communication_interface import CommunicationInterface
+from gcode_lib.drivers.driver_interface import DriverInterface
 
 log = logging.getLogger(__name__)
 
-
-class HardwareDisconnectedError(Exception):
-    """Raised when the hardware is abruptly disconnected."""
-
-    pass
-
-
-class FluidNCSerialDriver(CommunicationInterface):
+class FluidNCSerialDriver(DriverInterface):
     """
     Non-blocking serial communication driver for FluidNC.
     Acts purely as a transport pipe without managing state or queues.
@@ -88,17 +81,17 @@ class FluidNCSerialDriver(CommunicationInterface):
     def terminate(self):
         self.close()
 
-    def send_message(self, message: str, append_newline: bool = True):
+    def send_message(self, message: str, ensure_newline: bool = True):
         """Write raw payload string directly to serial port."""
         if self._serial is None or not self._serial.is_open:
             log.error(
                 "Cannot send message: Serial port %s is not connected.", self._port
             )
-            raise HardwareDisconnectedError("Serial port is not connected.")
+            raise SerialException("Serial port is not connected.")
 
         try:
             payload_str = message
-            if append_newline and not payload_str.endswith("\n"):
+            if ensure_newline and not payload_str.endswith("\n"):
                 payload_str += "\n"
 
             self._serial.write(payload_str.encode("utf-8"))
@@ -109,7 +102,7 @@ class FluidNCSerialDriver(CommunicationInterface):
         except SerialException as e:
             log.error("Hardware disconnected during write on %s: %s", self._port, e)
             self.close()
-            raise HardwareDisconnectedError(f"Connection lost: {e}")
+            raise
 
     def send(self, message: str):
         """
@@ -119,7 +112,7 @@ class FluidNCSerialDriver(CommunicationInterface):
         clean_msg = message.strip()
         is_realtime = len(clean_msg) == 1 and clean_msg in self.REALTIME_COMMANDS
 
-        self.send_message(message, append_newline=not is_realtime)
+        self.send_message(message, ensure_newline=not is_realtime)
 
     def read_message(self) -> Optional[str]:
         if self._serial is None or not self._serial.is_open:
@@ -140,7 +133,7 @@ class FluidNCSerialDriver(CommunicationInterface):
         except OSError as e:
             log.error("Hardware disconnected during read on %s: %s", self._port, e)
             self.close()
-            raise HardwareDisconnectedError(f"Connection lost: {e}")
+            raise e
 
         return None
 

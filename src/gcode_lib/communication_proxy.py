@@ -5,21 +5,18 @@ import os
 import time
 from typing import Optional
 
-from gcode_lib.communication_interface import CommunicationInterface
+from gcode_lib.drivers.driver_interface import DriverInterface
 from gcode_lib.communication_worker import CommunicationWorker
 
 log = logging.getLogger(__name__)
 
-
-# TODO: CommunicationInterface
 class CommunicationProxy:
     """
-    Main-process proxy that implements CommunicationInterface.
-    Forwards commands over IPC to a CommunicationWorker process
+    Main-process proxy that forwards commands over IPC to a CommunicationWorker process
     and maintains the watchdog heartbeat.
     """
 
-    def __init__(self, driver: CommunicationInterface, heartbeat_interval: float = 0.2):
+    def __init__(self, driver: DriverInterface, heartbeat_interval: float = 0.2):
         self._driver = driver
         self._heartbeat_interval = heartbeat_interval
         self._worker = CommunicationWorker(driver=self._driver)
@@ -36,12 +33,19 @@ class CommunicationProxy:
             heartbeat_interval,
         )
 
-    def connect(self, setup_reporting: bool = True, timeout: float = 5.0, clear_messages: bool = True):
+    def connect(
+        self,
+        setup_reporting: bool = True,
+        timeout: float = 5.0,
+        clear_messages: bool = True,
+    ):
         """Start worker process, wait for ready event, and start heartbeat thread."""
 
         # WARN: This triggers when using context managers
         if not self._is_closed and self._worker and self._worker.is_alive():
-            log.warning("CommunicationProxy is already connected. Ignoring duplicate connect() call.")
+            log.warning(
+                "CommunicationProxy is already connected. Ignoring duplicate connect() call."
+            )
             return self
 
         self._worker = CommunicationWorker(driver=self._driver)
@@ -69,7 +73,9 @@ class CommunicationProxy:
             self.setup_reporting()
 
         if clear_messages:
-            log.debug("Waiting for hardware boot banner and clearing startup messages...")
+            log.debug(
+                "Waiting for hardware boot banner and clearing startup messages..."
+            )
             start_time = time.monotonic()
             boot_timeout = 2.0  # Max time to wait for boot splash
 
@@ -89,7 +95,6 @@ class CommunicationProxy:
                     break
 
             log.debug("All initial boot messages cleared.")
-
 
         return self
 
@@ -133,14 +138,14 @@ class CommunicationProxy:
         log.debug("Queueing message to worker: %r", message)
         self._worker.cmd_queue.put(("QUEUE", message))
 
-    def send_message(self, message: str, respect_buffer: bool = True):
+    def send_message(self, message: str, ensure_newline: bool = True):
         """Send a command directly to the worker process."""
         log.debug(
-            "Sending message directly to worker (respect_buffer=%s): %r",
-            respect_buffer,
+            "Sending message directly to worker (ensure_newline=%s): %r",
+            ensure_newline,
             message,
         )
-        self._worker.cmd_queue.put(("SEND_MESSAGE", message, respect_buffer))
+        self._worker.cmd_queue.put(("SEND_MESSAGE", message, ensure_newline))
 
     def send(self, message: str):
         """Infer message type and forward to worker process."""

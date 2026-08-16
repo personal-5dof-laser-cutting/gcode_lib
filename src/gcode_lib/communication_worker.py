@@ -3,9 +3,8 @@ import multiprocessing
 import queue
 import time
 from collections import deque
-from typing import Optional
 
-from gcode_lib.communication_interface import CommunicationInterface
+from gcode_lib.drivers.driver_interface import DriverInterface
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ class CommunicationWorker(multiprocessing.Process):
 
     def __init__(
         self,
-        driver: CommunicationInterface,
+        driver: DriverInterface,
         timeout_sec: float = 0.5,
         buffer_size: int = GRBL_RX_BUFFER_SIZE,
     ):
@@ -56,7 +55,7 @@ class CommunicationWorker(multiprocessing.Process):
             )
             # Signal proxy that hardware connection is ready
             self.ready_event.set()
-        except Exception as e:
+        except Exception:
             log.exception("Failed to establish connection with driver.")
             self._running.clear()
             return
@@ -99,12 +98,12 @@ class CommunicationWorker(multiprocessing.Process):
                     self._enqueue_gcode(args[0])
 
                 elif action == "SEND_MESSAGE":
-                    message, respect_buffer = args
-                    if respect_buffer:
+                    message, ensure_newline = args
+                    if ensure_newline:
                         self._enqueue_gcode(message)
                     else:
                         log.debug("Sending real-time message immediately: %r", message)
-                        self.driver.send_message(message, respect_buffer=False)
+                        self.driver.send_message(message, ensure_newline=False)
 
                 elif action == "SETUP_REPORTING":
                     log.debug("Setting up status reporting...")
@@ -186,7 +185,7 @@ class CommunicationWorker(multiprocessing.Process):
                     self.bytes_in_buffer + msg_len,
                     msg,
                 )
-                self.driver.send_message(msg, respect_buffer=True)
+                self.driver.send_message(msg, ensure_newline=True)
                 self._pending_line_lengths.append(msg_len)
             else:
                 break
@@ -200,7 +199,7 @@ class CommunicationWorker(multiprocessing.Process):
         log.critical("E-STOP TRIGGERED! Initiating emergency hardware shutoff...")
         try:
             self.driver.send_message(
-                self.driver.safety_shutoff_command, respect_buffer=False
+                self.driver.safety_shutoff_command, ensure_newline=False
             )
             log.info("Safety shutoff command sent.")
             self.driver.terminate()
