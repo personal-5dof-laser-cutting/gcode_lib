@@ -41,6 +41,8 @@ class CommunicationProxy:
     ):
         """Start worker process, wait for ready event, and start heartbeat thread."""
 
+        # TODO: This never terminates if hardware interface doesn't exist
+
         # WARN: This triggers when using context managers
         if not self._is_closed and self._worker and self._worker.is_alive():
             log.warning(

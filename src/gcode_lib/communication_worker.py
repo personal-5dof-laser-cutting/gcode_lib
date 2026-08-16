@@ -192,6 +192,7 @@ class CommunicationWorker(multiprocessing.Process):
 
     @staticmethod
     def _is_ack_response(response: str) -> bool:
+        # TODO: hardware specific codes should live on driver
         resp = response.strip().lower()
         return resp == "ok" or resp.startswith("error:")
 
