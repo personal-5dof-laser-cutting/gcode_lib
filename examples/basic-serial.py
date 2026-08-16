@@ -1,5 +1,4 @@
 from gcode_lib import CommunicationProxy, FluidNCSerialDriver
-import time
 import logging
 
 logging.basicConfig(
@@ -11,15 +10,7 @@ log = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     driver = FluidNCSerialDriver("/dev/ttyUSB0")
-    proxy = CommunicationProxy(driver=driver)
 
-    log.info("Connecting")
-    proxy.connect(setup_reporting=False)
-    time.sleep(5)
-    log.info("Sending Message")
-    proxy.send_message("?")
-    time.sleep(5)
-    log.info("Reading Message")
-    print(proxy.read_message())
-    log.info("Closing")
-    proxy.close()
+    with CommunicationProxy(driver=driver).connect(setup_reporting=False) as proxy:
+        proxy.send("?")
+        print(proxy.read_message(timeout=1))
