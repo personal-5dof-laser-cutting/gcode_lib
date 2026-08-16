@@ -6,14 +6,14 @@ from typing import Optional
 import websocket
 from websocket import WebSocketException, WebSocketTimeoutException
 
-from gcode_lib.communication_interface import CommunicationInterface
+from gcode_lib.drivers.driver_interface import DriverInterface
 
 log = logging.getLogger(__name__)
 
 # WARN: not all features implemented, see serial_driver
 
 
-class FluidNCWebsocketsDriver(CommunicationInterface):
+class FluidNCWebsocketsDriver(DriverInterface):
     """WebSockets communication driver for FluidNC."""
 
     _address: str
