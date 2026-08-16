@@ -1,5 +1,4 @@
 import logging
-from queue import Queue
 import socket
 from typing import Optional
 
@@ -10,45 +9,28 @@ from gcode_lib.drivers.driver_interface import DriverInterface
 
 log = logging.getLogger(__name__)
 
-# WARN: not all features implemented, see serial_driver
-
 
 class FluidNCWebsocketsDriver(DriverInterface):
-    """WebSockets communication driver for FluidNC."""
+    """
+    Non-blocking WebSockets communication driver for FluidNC.
+    Acts purely as a transport pipe without managing state or queues.
+    """
 
-    _address: str
-    _port: int
-    _safety_shutoff_command: str
-    _send_queue: Queue
-    _recv_queue: Queue
-    _ws: Optional[websocket.WebSocket]
+    # INFO: # Status (?), Cycle Start (~), Feed Hold (!), Soft Reset (\x18)
+    REALTIME_COMMANDS = {"?", "~", "!", "\x18"}
 
     def __init__(self, address: str, port: int, safety_shutoff_command: str = "\x18"):
-        """
-        Initialize the WebSockets driver.
-
-        Parameters
-        ----------
-        address : str
-            The network address to connect to.
-        port : int
-            The network port to use.
-        safety_shutoff_command : str, default "\x18"
-            The command sent to the hardware on watchdog timeout.
-        """
         assert safety_shutoff_command, "Safety shutoff command must be set."
 
         self._address = address
         self._port = port
         self._safety_shutoff_command = safety_shutoff_command
 
-        self._send_queue = Queue()
-        self._recv_queue = Queue()
-        self._ws = None
+        self._ws: Optional[websocket.WebSocket] = None
+        self._rx_buffer = ""
 
     def connect(self):
-        """Establish a WebSocket connection to the FluidNC controller."""
-        if self._ws is not None:
+        if self._ws is not None and self._ws.connected:
             log.warning("WebSocket connection is already active.")
             return
 
@@ -62,8 +44,11 @@ class FluidNCWebsocketsDriver(DriverInterface):
         try:
             self._ws = websocket.WebSocket()
             self._ws.connect(url, timeout=2.0)
+
             # Short timeout so read_message returns None non-blockingly when empty
             self._ws.settimeout(0.05)
+            self._rx_buffer = ""
+
             log.info("Connected to FluidNC WebSocket at %s", url)
         except Exception as e:
             self._ws = None
@@ -71,110 +56,90 @@ class FluidNCWebsocketsDriver(DriverInterface):
             raise
 
     def close(self):
-        """Close the WebSocket connection gracefully."""
         if self._ws is not None:
             try:
                 self._ws.close()
-                log.info("WebSocket connection closed gracefully.")
             except Exception as e:
                 log.warning("Error closing WebSocket connection: %s", e)
             finally:
                 self._ws = None
+                self._rx_buffer = ""
 
     def terminate(self):
-        """Forcefully close the connection and clear local queues."""
         self.close()
-        with self._send_queue.mutex:
-            self._send_queue.queue.clear()
-        with self._recv_queue.mutex:
-            self._recv_queue.queue.clear()
-        log.info("WebSocket driver terminated.")
 
-    def queue_message(self, message: str):
-        """
-        Add a message to the send queue.
-
-        Parameters
-        ----------
-        message : str
-            The message to add.
-        """
-        self._send_queue.put(message)
-
-    def send_message(self, message: str, respect_buffer: bool = True):
-        """
-        Send a message directly over the WebSocket, bypassing the send queue.
-
-        Parameters
-        ----------
-        message : str
-            The message to send.
-        respect_buffer : bool, default True
-            If True, wait for space in the remote buffer before sending.
-        """
-        if self._ws is None:
+    def send_message(self, message: str, ensure_newline: bool = True):
+        """Write raw payload string directly to WebSocket."""
+        if self._ws is None or not self._ws.connected:
             log.error("Cannot send message: WebSocket is not connected.")
-            return
+            raise WebSocketException("WebSocket is not connected.")
 
         try:
-            self._ws.send(message)
+            payload_str = message
+            if ensure_newline and not payload_str.endswith("\n"):
+                payload_str += "\n"
+
+            self._ws.send(payload_str)
         except Exception as e:
-            log.error("Error sending message via WebSocket: %s", e)
+            log.error("Hardware disconnected during write via WebSocket: %s", e)
+            self.close()
             raise
 
     def send(self, message: str):
         """
-        Infer the send method based on the message type.
-
-        Parameters
-        ----------
-        message : str
-            The message to send.
+        Intelligently send a command.
+        Infers if the message is a real-time command and skips the newline if so.
         """
-        if self._ws is None:
-            log.error("Cannot send message: WebSocket is not connected.")
-            return
+        clean_msg = message.strip()
+        is_realtime = len(clean_msg) == 1 and clean_msg in self.REALTIME_COMMANDS
 
-        # TODO: get a list of in-band commands from the corgi
+        self.send_message(message, ensure_newline=not is_realtime)
 
     def read_message(self) -> Optional[str]:
-        """
-        Read a message from the receive buffer or the WebSocket.
-
-        Returns
-        -------
-        str or None
-            The message if data is available, otherwise None.
-        """
-        if not self._recv_queue.empty():
-            return self._recv_queue.get_nowait()
-
-        # TODO: does this behaviour make sense?
-        if self._ws is None:
+        if self._ws is None or not self._ws.connected:
             return None
 
+        # Check if we already have a complete line in the buffer
+        if "\n" in self._rx_buffer:
+            line, _, remaining = self._rx_buffer.partition("\n")
+            self._rx_buffer = remaining
+            clean_line = line.strip()
+            if clean_line:
+                return clean_line
+
+        # No complete line buffered, try to read from WebSocket
         try:
             data = self._ws.recv()
             if isinstance(data, bytes):
-                return data.decode("utf-8", errors="replace")
-            return data
+                data = data.decode("utf-8", errors="replace")
+
+            self._rx_buffer += data
+
+            # Process the newly appended buffer
+            if "\n" in self._rx_buffer:
+                line, _, remaining = self._rx_buffer.partition("\n")
+                self._rx_buffer = remaining
+                clean_line = line.strip()
+                if clean_line:
+                    return clean_line
+
         except (WebSocketTimeoutException, socket.timeout, TimeoutError):
-            return None
+            # Normal timeout for a non-blocking read operation
+            pass
         except WebSocketException as e:
             log.error("WebSocket error while reading: %s", e)
-            return None
+            self.close()
+            raise e
         except Exception as e:
-            log.error("Unexpected error reading from WebSocket: %s", e)
-            return None
+            log.error("Unexpected hardware disconnect via WebSocket: %s", e)
+            self.close()
+            raise e
+
+        return None
+
+    def setup_reporting(self):
+        self.send_message("$10=2", ensure_newline=True)
 
     @property
     def safety_shutoff_command(self) -> str:
-        """
-        Get the safety shutoff command.
-
-        Returns
-        -------
-        str
-            The realtime command string.
-        """
         return self._safety_shutoff_command
