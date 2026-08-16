@@ -1,6 +1,5 @@
 import logging
 import time
-from queue import Queue
 from typing import Optional
 
 import serial
@@ -11,15 +10,12 @@ from gcode_lib.communication_interface import CommunicationInterface
 log = logging.getLogger(__name__)
 
 
-class FluidNCSerialDriver(CommunicationInterface):
-    """Serial communication driver for FluidNC."""
-
-    _port: str
-    _baudrate: int
-    _safety_shutoff_command: str
-    _send_queue: Queue
-    _recv_queue: Queue
-    _serial: Optional[serial.Serial]
+# TODO: CommunicationInterface
+class FluidNCSerialDriver:
+    """
+    Non-blocking serial communication driver for FluidNC.
+    Acts purely as a transport pipe without managing state or queues.
+    """
 
     def __init__(
         self, port: str, baudrate: int = 115200, safety_shutoff_command: str = "\x18"
@@ -31,9 +27,8 @@ class FluidNCSerialDriver(CommunicationInterface):
         self._baudrate = baudrate
         self._safety_shutoff_command = safety_shutoff_command
 
-        self._send_queue = Queue()
-        self._recv_queue = Queue()
-        self._serial = None
+        self._serial: Optional[serial.Serial] = None
+        self._rx_buffer = bytearray()
 
         log.debug(
             "FluidNCSerialDriver initialized for port=%s, baudrate=%d, safety_shutoff_command=%r",
@@ -55,25 +50,31 @@ class FluidNCSerialDriver(CommunicationInterface):
             self._serial = serial.Serial(
                 port=self._port,
                 baudrate=self._baudrate,
-                timeout=0.1,
+                timeout=0,
+                write_timeout=0.5,
                 rtscts=False,
                 dsrdtr=False,
             )
 
-            # INFO: Prevent ESP32 from remaining in reset or bootloader mode
+            # Prevent ESP32 from remaining in reset or bootloader mode
             self._serial.dtr = False
             self._serial.rts = False
 
+            # Allow ESP32 a moment to finish hardware reset after DTR toggle
             time.sleep(1.0)
 
-            # INFO: Wake up GRBL/FluidNC parser and flush serial boot noise
+            # Wake up GRBL/FluidNC parser and flush serial boot noise
             self._serial.reset_input_buffer()
             self._serial.reset_output_buffer()
             self._serial.write(b"\r\n\r\n")
             time.sleep(0.1)
             self._serial.reset_input_buffer()
+            self._rx_buffer.clear()
 
-            log.info("Connected to serial port %s (DTR/RTS cleared, wake-up sent)", self._port)
+            log.info(
+                "Connected to serial port %s (DTR/RTS cleared, wake-up sent)",
+                self._port,
+            )
         except Exception as e:
             self._serial = None
             log.error("Failed to connect to serial port %s: %s", self._port, e)
@@ -91,22 +92,15 @@ class FluidNCSerialDriver(CommunicationInterface):
                 log.warning("Error closing serial port %s: %s", self._port, e)
             finally:
                 self._serial = None
+                self._rx_buffer.clear()
 
     def terminate(self):
-        """Forcefully close the serial connection and clear local queues."""
-        log.warning("Terminating serial driver on %s and clearing queues...", self._port)
+        """Forcefully close the serial connection."""
+        log.warning("Terminating serial driver on %s...", self._port)
         self.close()
-        with self._send_queue.mutex:
-            self._send_queue.queue.clear()
-        with self._recv_queue.mutex:
-            self._recv_queue.queue.clear()
-        log.info("Serial driver terminated.")
-
-    def queue_message(self, message: str):
-        log.debug("Queueing message for serial send: %r", message)
-        self._send_queue.put(message)
 
     def send_message(self, message: str, respect_buffer: bool = True):
+        """Write raw payload string directly to serial port."""
         if self._serial is None or not self._serial.is_open:
             log.error(
                 "Cannot send message: Serial port %s is not connected.", self._port
@@ -114,45 +108,49 @@ class FluidNCSerialDriver(CommunicationInterface):
             return
 
         try:
+            # Ensure line ending for G-code if not present and not a real-time command
+            payload_str = message
+            if respect_buffer and not payload_str.endswith("\n"):
+                payload_str += "\n"
+
             log.debug(
-                "Writing payload directly to serial %s (respect_buffer=%s): %r",
+                "Writing bytes to serial %s: %r",
                 self._port,
-                respect_buffer,
-                message,
+                payload_str,
             )
-            payload = message.encode("utf-8")
-            self._serial.write(payload)
+            self._serial.write(payload_str.encode("utf-8"))
             self._serial.flush()
         except Exception as e:
             log.error("Error writing to serial port %s: %s", self._port, e)
             raise
 
     def send(self, message: str):
-        if self._serial is None or not self._serial.is_open:
-            log.error(
-                "Cannot send message: Serial port %s is not connected.", self._port
-            )
-            return
-
-        log.debug("Inferred send called with message: %r", message)
-        pass
+        """Forward send call directly to send_message."""
+        self.send_message(message, respect_buffer=True)
 
     def read_message(self) -> Optional[str]:
-        if not self._recv_queue.empty():
-            msg = self._recv_queue.get_nowait()
-            log.debug("Read message from driver internal recv queue: %r", msg)
-            return msg
-
+        """
+        Non-blocking read. Drains available serial bytes into an internal buffer
+        and returns complete lines one at a time.
+        """
         if self._serial is None or not self._serial.is_open:
             return None
 
         try:
-            if self._serial.in_waiting > 0:
-                line_bytes = self._serial.readline()
-                if line_bytes:
-                    line = line_bytes.decode("utf-8", errors="replace").strip()
-                    log.debug("Read line directly from serial %s: %r", self._port, line)
+            # 1. Read all waiting raw bytes into our stream buffer
+            in_waiting = self._serial.in_waiting
+            if in_waiting > 0:
+                self._rx_buffer.extend(self._serial.read(in_waiting))
+
+            # 2. Extract the first complete line if a newline exists
+            if b"\n" in self._rx_buffer:
+                line_bytes, _, remaining = self._rx_buffer.partition(b"\n")
+                self._rx_buffer = bytearray(remaining)
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if line:  # Filter out empty blank lines
+                    log.debug("Read line from serial %s: %r", self._port, line)
                     return line
+
         except SerialException as e:
             log.error("Serial error while reading from %s: %s", self._port, e)
             return None
@@ -163,52 +161,15 @@ class FluidNCSerialDriver(CommunicationInterface):
         return None
 
     def get_state(self) -> Optional[str]:
-        if self._serial is None or not self._serial.is_open:
-            log.error("Cannot query state: Serial port %s is not connected.", self._port)
-            return None
-
-        try:
-            log.debug("Sending real-time state query '?' to serial %s", self._port)
-            self._serial.write(b"?")
-            self._serial.flush()
-        except Exception as e:
-            log.error("Failed to send state query: %s", e)
-            return None
-
-        timeout_time = time.time() + 0.5
-        while time.time() < timeout_time:
-            try:
-                if self._serial.in_waiting > 0:
-                    line = (
-                        self._serial.readline()
-                        .decode("utf-8", errors="replace")
-                        .strip()
-                    )
-                    if line.startswith("<") and line.endswith(">"):
-                        log.debug("Received state response from serial %s: %r", self._port, line)
-                        return line
-                    elif line:
-                        log.debug(
-                            "Intercepted non-state response during get_state, queueing: %r",
-                            line,
-                        )
-                        self._recv_queue.put(line)
-            except SerialException as e:
-                log.error("Serial error while waiting for state: %s", e)
-                break
-            except Exception as e:
-                log.error("Unexpected error waiting for state: %s", e)
-                break
-
-            time.sleep(0.01)
-
-        log.warning("Timeout waiting for state response from FluidNC on %s.", self._port)
+        """Send asynchronous status request '?' without blocking."""
+        log.debug("Sending real-time state query '?' to serial %s", self._port)
+        self.send_message("?", respect_buffer=False)
         return None
 
     def setup_reporting(self):
+        """Configure status reporting mask ($10=2)."""
         log.info("Configuring FluidNC status reporting mask ($10=2)...")
-        log.debug("Sending setup command payload: %r", "$10=2\n")
-        self.send_message("$10=2\n", respect_buffer=False)
+        self.send_message("$10=2", respect_buffer=False)
 
     @property
     def safety_shutoff_command(self) -> str:
