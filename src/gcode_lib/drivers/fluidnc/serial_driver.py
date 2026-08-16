@@ -9,6 +9,7 @@ from gcode_lib.drivers.driver_interface import DriverInterface
 
 log = logging.getLogger(__name__)
 
+
 class FluidNCSerialDriver(DriverInterface):
     """
     Non-blocking serial communication driver for FluidNC.

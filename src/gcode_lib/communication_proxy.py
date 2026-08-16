@@ -10,6 +10,7 @@ from gcode_lib.communication_worker import CommunicationWorker
 
 log = logging.getLogger(__name__)
 
+
 class CommunicationProxy:
     """
     Main-process proxy that forwards commands over IPC to a CommunicationWorker process

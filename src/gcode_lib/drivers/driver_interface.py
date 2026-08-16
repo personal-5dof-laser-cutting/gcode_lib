@@ -20,7 +20,6 @@ class DriverInterface(ABC):
         """Send the termination signal and exit."""
         pass
 
-
     @abstractmethod
     def send_message(self, message: str, respect_buffer: bool = True):
         """
@@ -73,4 +72,3 @@ class DriverInterface(ABC):
         str : The specific command sequence required to trigger an immediate safety shutoff.
         """
         pass
-
