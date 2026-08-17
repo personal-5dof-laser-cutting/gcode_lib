@@ -85,7 +85,7 @@ def test_ack_frees_buffer(worker, mock_driver):
 def test_buffer_capacity_holds_overflowing_commands(worker, mock_driver):
     # Set tiny buffer size to trigger capacity hold easily
     worker.buffer_size = 10
-    worker._pending_line_lengths.append(8) # Only 2 bytes remaining
+    worker._pending_line_lengths.append(8)  # Only 2 bytes remaining
 
     # Attempting to queue a 7 byte command ("G0 X10\n") should hold
     worker.cmd_queue.put(("QUEUE", "G0 X10"))

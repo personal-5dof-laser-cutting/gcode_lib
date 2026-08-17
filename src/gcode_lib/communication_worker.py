@@ -244,36 +244,6 @@ class CommunicationWorker(multiprocessing.Process):
         if clean_msg:
             self._outbound_queue.append(clean_msg)
 
-    def _flush_outbound_queue(self) -> bool:
-        """
-        Send queued commands to the driver when hardware buffer space is available.
-
-        Returns
-        -------
-        bool
-            True if one or more messages were sent; False otherwise.
-        """
-        sent_any = False
-        while self._outbound_queue:
-            next_msg = self._outbound_queue[0]
-            msg_len = len(next_msg) + 1
-
-            if self.bytes_in_buffer + msg_len <= self.buffer_size:
-                msg = self._outbound_queue.popleft()
-                try:
-                    self.driver.send(msg)
-                    self._pending_line_lengths.append(msg_len)
-                    sent_any = True
-                except Exception:
-                    log.exception("Failed to transmit command string to driver.")
-                    self.trigger_safety_shutdown()
-                    self._running.clear()
-                    break
-            else:
-                break
-
-        return sent_any
-
     def _send_system_event(self, event_name: str) -> None:
         """
         Send an internal system notification message to the proxy response queue.
