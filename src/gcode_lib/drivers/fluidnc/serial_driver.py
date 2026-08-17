@@ -12,15 +12,37 @@ log = logging.getLogger(__name__)
 
 class FluidNCSerialDriver(DriverInterface):
     """
-    Non-blocking serial communication driver for FluidNC.
-    Acts purely as a transport pipe without managing state or queues.
+    Provide serial communication methods for FluidNC CNC controllers.
+
+    This class acts purely as a transport layer.
+    It transmits raw string commands and reads incoming line responses.
+
+    Parameters
+    ----------
+    port : str
+        The operating system serial port device identifier.
+    baudrate : int, default=115200
+        The serial communication speed in bits per second.
+    safety_shutoff_command : str, default="\\x18"
+        The character sequence required for immediate soft reset.
+    rx_buffer_size : int, default=128
+        The microcontroller hardware receive buffer limit in bytes.
+
+    Attributes
+    ----------
+    REALTIME_COMMANDS : set of str
+        The set of single-character real-time control commands.
     """
 
-    # INFO: # Status (?), Cycle Start (~), Feed Hold (!), Soft Reset (\x18)
     REALTIME_COMMANDS = {"?", "~", "!", "\x18"}
+    MAX_RX_BUFFER_BYTES = 4096
 
     def __init__(
-        self, port: str, baudrate: int = 115200, safety_shutoff_command: str = "\x18"
+        self,
+        port: str,
+        baudrate: int = 115200,
+        safety_shutoff_command: str = "\x18",
+        rx_buffer_size: int = 128,
     ):
         assert baudrate > 0, "Baud rate must be positive."
         assert safety_shutoff_command, "Safety shutoff command must be set."
@@ -28,12 +50,57 @@ class FluidNCSerialDriver(DriverInterface):
         self._port = port
         self._baudrate = baudrate
         self._safety_shutoff_command = safety_shutoff_command
+        self._rx_buffer_size = rx_buffer_size
 
         self._serial: Optional[serial.Serial] = None
         self._rx_buffer = bytearray()
 
-    def connect(self):
-        if self._serial is not None and self._serial.is_open:
+    @property
+    def is_connected(self) -> bool:
+        """
+        Check if the serial port connection is active.
+
+        Returns
+        -------
+        bool
+            True if the serial port is open; False otherwise.
+        """
+        return self._serial is not None and self._serial.is_open
+
+    @property
+    def rx_buffer_size(self) -> int:
+        """
+        Get the microcontroller hardware receive buffer size.
+
+        Returns
+        -------
+        int
+            The hardware buffer capacity in bytes.
+        """
+        return self._rx_buffer_size
+
+    @property
+    def safety_shutoff_command(self) -> str:
+        """
+        Get the emergency shutoff command string.
+
+        Returns
+        -------
+        str
+            The command sequence required for immediate hardware stop.
+        """
+        return self._safety_shutoff_command
+
+    def connect(self) -> None:
+        """
+        Open the serial port and initialize communication with FluidNC.
+
+        Raises
+        ------
+        SerialException
+            If the serial port cannot be opened.
+        """
+        if self.is_connected:
             log.warning("Serial connection on %s is already active.", self._port)
             return
 
@@ -55,7 +122,7 @@ class FluidNCSerialDriver(DriverInterface):
             self._serial.rts = False
             time.sleep(1.0)
 
-            # Wake up GRBL/FluidNC parser and flush serial boot noise
+            # Wake up hardware parser and clear input noise
             self._serial.reset_input_buffer()
             self._serial.reset_output_buffer()
             self._serial.write(b"\r\n\r\n")
@@ -63,28 +130,48 @@ class FluidNCSerialDriver(DriverInterface):
             self._serial.reset_input_buffer()
             self._rx_buffer.clear()
 
-        except Exception as e:
+        except Exception as err:
             self._serial = None
-            log.error("Failed to connect to serial port %s: %s", self._port, e)
-            raise
+            log.error("Failed to connect to serial port %s: %s", self._port, err)
+            raise SerialException(f"Failed to connect to {self._port}") from err
 
-    def close(self):
+    def close(self) -> None:
+        """
+        Close the serial port connection gracefully.
+        """
         if self._serial is not None:
             try:
                 if self._serial.is_open:
                     self._serial.close()
-            except Exception as e:
-                log.warning("Error closing serial port %s: %s", self._port, e)
+            except Exception as err:
+                log.warning("Error closing serial port %s: %s", self._port, err)
             finally:
                 self._serial = None
                 self._rx_buffer.clear()
 
-    def terminate(self):
+    def terminate(self) -> None:
+        """
+        Close the serial port immediately.
+        """
         self.close()
 
-    def send_message(self, message: str, ensure_newline: bool = True):
-        """Write raw payload string directly to serial port."""
-        if self._serial is None or not self._serial.is_open:
+    def send_message(self, message: str, ensure_newline: bool = True) -> None:
+        """
+        Write a raw text payload string to the serial port.
+
+        Parameters
+        ----------
+        message : str
+            The text command string to transmit.
+        ensure_newline : bool, default=True
+            Set to True to append a newline character before transmission.
+
+        Raises
+        ------
+        SerialException
+            If the serial port is not connected or transmission fails.
+        """
+        if not self.is_connected or self._serial is None:
             log.error(
                 "Cannot send message: Serial port %s is not connected.", self._port
             )
@@ -98,31 +185,52 @@ class FluidNCSerialDriver(DriverInterface):
             self._serial.write(payload_str.encode("utf-8"))
             self._serial.flush()
         except SerialTimeoutException:
-            log.error("Write timeout on %s. Buffer might be full.", self._port)
+            log.error("Write timeout on %s. Buffer is full.", self._port)
             raise
-        except SerialException as e:
-            log.error("Hardware disconnected during write on %s: %s", self._port, e)
+        except (SerialException, OSError) as err:
+            log.error("Hardware disconnected during write on %s: %s", self._port, err)
             self.close()
-            raise
+            raise SerialException(f"Write failure on port {self._port}") from err
 
-    def send(self, message: str):
+    def send(self, message: str) -> None:
         """
-        Intelligently send a command.
-        Infers if the message is a real-time command and skips the newline if so.
+        Route a command line and transmit it over serial.
+
+        Parameters
+        ----------
+        message : str
+            The command string to evaluate and transmit.
         """
         clean_msg = message.strip()
         is_realtime = len(clean_msg) == 1 and clean_msg in self.REALTIME_COMMANDS
-
         self.send_message(message, ensure_newline=not is_realtime)
 
     def read_message(self) -> Optional[str]:
-        if self._serial is None or not self._serial.is_open:
+        """
+        Read the next complete response line from the serial buffer.
+
+        Returns
+        -------
+        Optional[str]
+            The received line string, or None if no full line exists.
+
+        Raises
+        ------
+        SerialException
+            If reading from the serial hardware fails.
+        """
+        if not self.is_connected or self._serial is None:
             return None
 
         try:
             in_waiting = self._serial.in_waiting
             if in_waiting > 0:
                 self._rx_buffer.extend(self._serial.read(in_waiting))
+
+            if len(self._rx_buffer) > self.MAX_RX_BUFFER_BYTES:
+                log.warning("RX buffer threshold exceeded. Flushing corrupt bytes.")
+                self._rx_buffer.clear()
+                return None
 
             if b"\n" in self._rx_buffer:
                 line_bytes, _, remaining = self._rx_buffer.partition(b"\n")
@@ -131,16 +239,32 @@ class FluidNCSerialDriver(DriverInterface):
                 if line:
                     return line
 
-        except OSError as e:
-            log.error("Hardware disconnected during read on %s: %s", self._port, e)
+        except (SerialException, OSError) as err:
+            log.error("Hardware disconnected during read on %s: %s", self._port, err)
             self.close()
-            raise e
+            raise SerialException(f"Read failure on port {self._port}") from err
 
         return None
 
-    def setup_reporting(self):
-        self.send_message("$10=2", append_newline=True)
+    def setup_reporting(self) -> None:
+        """
+        Send configuration commands to configure FluidNC status reporting.
+        """
+        self.send_message("$10=2", ensure_newline=True)
 
-    @property
-    def safety_shutoff_command(self) -> str:
-        return self._safety_shutoff_command
+    def is_ack(self, response: str) -> bool:
+        """
+        Check if a response line is an acknowledgment signal.
+
+        Parameters
+        ----------
+        response : str
+            The raw response string received from hardware.
+
+        Returns
+        -------
+        bool
+            True if the line is 'ok' or starts with 'error:'; False otherwise.
+        """
+        resp = response.strip().lower()
+        return resp == "ok" or resp.startswith("error:")

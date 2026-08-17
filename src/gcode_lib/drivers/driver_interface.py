@@ -3,65 +3,129 @@ from typing import Optional
 
 
 class DriverInterface(ABC):
-    """Base class for communication interfaces."""
+    """
+    Define abstract communication methods for hardware drivers.
+
+    All concrete driver implementations must inherit from this class
+    and implement all abstract methods and properties.
+    """
 
     @abstractmethod
-    def connect(self):
-        """Establish a connection using the detected channel."""
-        pass
-
-    @abstractmethod
-    def close(self):
-        """Close the connection gracefully and wait for confirmation."""
-        pass
-
-    @abstractmethod
-    def terminate(self):
-        """Send the termination signal and exit."""
-        pass
-
-    @abstractmethod
-    def send_message(self, message: str, respect_buffer: bool = True):
+    def connect(self) -> None:
         """
-        Skip the send queue and send the message directly.
+        Establish a physical hardware connection over the selected channel.
+
+        Raises
+        ------
+        ConnectionError
+            If the hardware connection fails to establish.
+        """
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        """
+        Close the hardware connection gracefully.
+        """
+        pass
+
+    @abstractmethod
+    def terminate(self) -> None:
+        """
+        Stop hardware communication immediately without graceful handshakes.
+        """
+        pass
+
+    @abstractmethod
+    def send_message(self, message: str, append_newline: bool = True) -> None:
+        """
+        Send a direct raw text string to the hardware interface.
 
         Parameters
         ----------
         message : str
-            The message to send.
-        respect_buffer : bool, default True
-            If True, wait for space in the remote buffer before sending.
+            The raw text string to transmit.
+        append_newline : bool, default=True
+            Set to True to append a line break character to the message string.
+
+        Raises
+        ------
+        IOError
+            If transmission over the physical channel fails.
         """
         pass
 
     @abstractmethod
-    def send(self, message: str):
+    def send(self, message: str) -> None:
         """
-        Infer the send method based on the message type.
+        Route and transmit a formatted command line to the hardware.
 
         Parameters
         ----------
         message : str
-            The message to send.
+            The G-code or protocol command string to transmit.
+
+        Raises
+        ------
+        IOError
+            If transmission over the physical channel fails.
         """
         pass
 
     @abstractmethod
     def read_message(self) -> Optional[str]:
         """
-        Read a message from the receive buffer.
+        Read the next available text message line from the receive buffer.
 
         Returns
         -------
-        str or None
-            The message if the buffer is not empty, otherwise None.
+        Optional[str]
+            The string line received from hardware, or None if no data exists.
+
+        Raises
+        ------
+        IOError
+            If reading from the physical channel fails.
         """
         pass
 
     @abstractmethod
-    def setup_reporting(self):
+    def setup_reporting(self) -> None:
         """
-        Initialize and configure status, diagnostic, or telemetry reporting.
+        Send initial configuration commands to enable hardware telemetry reporting.
+        """
+        pass
+
+    @abstractmethod
+    def is_ack(self, response: str) -> bool:
+        """
+        Check if a hardware response line is a command acknowledgment.
+
+        Parameters
+        ----------
+        response : str
+            The raw string line received from hardware.
+
+        Returns
+        -------
+        bool
+            True if the line is a recognized command acknowledgment; False otherwise.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """
+        bool : True if the physical hardware connection is active; False otherwise.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def rx_buffer_size(self) -> int:
+        """
+        int : The total capacity of the hardware serial receive buffer in bytes.
         """
         pass
 
@@ -69,6 +133,6 @@ class DriverInterface(ABC):
     @abstractmethod
     def safety_shutoff_command(self) -> str:
         """
-        str : The specific command sequence required to trigger an immediate safety shutoff.
+        str : The exact byte or string sequence required for emergency stop.
         """
         pass

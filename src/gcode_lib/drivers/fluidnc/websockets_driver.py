@@ -3,7 +3,11 @@ import socket
 from typing import Optional
 
 import websocket
-from websocket import WebSocketException, WebSocketTimeoutException
+from websocket import (
+    WebSocketConnectionClosedException,
+    WebSocketException,
+    WebSocketTimeoutException,
+)
 
 from gcode_lib.drivers.driver_interface import DriverInterface
 
@@ -12,25 +16,95 @@ log = logging.getLogger(__name__)
 
 class FluidNCWebsocketsDriver(DriverInterface):
     """
-    Non-blocking WebSockets communication driver for FluidNC.
-    Acts purely as a transport pipe without managing state or queues.
+    Provide non-blocking WebSocket communication for FluidNC controllers.
+
+    This class acts purely as a network transport layer.
+    It transmits text commands and reads incoming line responses.
+
+    Parameters
+    ----------
+    address : str
+        The IP address or domain name of the controller.
+    port : int
+        The WebSocket server port number.
+    safety_shutoff_command : str, default="\\x18"
+        The character sequence required for immediate soft reset.
+    rx_buffer_size : int, default=128
+        The microcontroller hardware receive buffer limit in bytes.
+
+    Attributes
+    ----------
+    REALTIME_COMMANDS : set of str
+        The set of single-character real-time control commands.
     """
 
-    # INFO: # Status (?), Cycle Start (~), Feed Hold (!), Soft Reset (\x18)
     REALTIME_COMMANDS = {"?", "~", "!", "\x18"}
+    MAX_RX_BUFFER_CHARS = 4096
 
-    def __init__(self, address: str, port: int, safety_shutoff_command: str = "\x18"):
+    def __init__(
+        self,
+        address: str,
+        port: int,
+        safety_shutoff_command: str = "\x18",
+        rx_buffer_size: int = 128,
+    ):
         assert safety_shutoff_command, "Safety shutoff command must be set."
+        assert port > 0, "Port must be a positive integer."
 
         self._address = address
         self._port = port
         self._safety_shutoff_command = safety_shutoff_command
+        self._rx_buffer_size = rx_buffer_size
 
         self._ws: Optional[websocket.WebSocket] = None
         self._rx_buffer = ""
 
-    def connect(self):
-        if self._ws is not None and self._ws.connected:
+    @property
+    def is_connected(self) -> bool:
+        """
+        Check if the WebSocket connection is active.
+
+        Returns
+        -------
+        bool
+            True if the WebSocket is connected; False otherwise.
+        """
+        return self._ws is not None and self._ws.connected
+
+    @property
+    def rx_buffer_size(self) -> int:
+        """
+        Get the microcontroller hardware receive buffer size.
+
+        Returns
+        -------
+        int
+            The hardware buffer capacity in bytes.
+        """
+        return self._rx_buffer_size
+
+    @property
+    def safety_shutoff_command(self) -> str:
+        """
+        Get the emergency shutoff command string.
+
+        Returns
+        -------
+        str
+            The command sequence required for immediate hardware stop.
+        """
+        return self._safety_shutoff_command
+
+    def connect(self) -> None:
+        """
+        Open the WebSocket connection to FluidNC.
+
+        Raises
+        ------
+        WebSocketException
+            If the network connection fails.
+        """
+        if self.is_connected:
             log.warning("WebSocket connection is already active.")
             return
 
@@ -42,35 +116,55 @@ class FluidNCWebsocketsDriver(DriverInterface):
 
         log.info("Connecting to FluidNC WebSocket at %s...", url)
         try:
-            self._ws = websocket.WebSocket()
-            self._ws.connect(url, timeout=2.0)
+            ws = websocket.WebSocket()
+            ws.connect(url, timeout=2.0)
+            ws.settimeout(0.05)
 
-            # Short timeout so read_message returns None non-blockingly when empty
-            self._ws.settimeout(0.05)
+            self._ws = ws
             self._rx_buffer = ""
-
             log.info("Connected to FluidNC WebSocket at %s", url)
-        except Exception as e:
-            self._ws = None
-            log.error("Failed to connect to FluidNC WebSocket at %s: %s", url, e)
-            raise
 
-    def close(self):
+        except Exception as err:
+            self.close()
+            log.error("Failed to connect to WebSocket at %s: %s", url, err)
+            raise WebSocketException(f"Failed to connect to {url}") from err
+
+    def close(self) -> None:
+        """
+        Close the WebSocket connection gracefully.
+        """
         if self._ws is not None:
             try:
                 self._ws.close()
-            except Exception as e:
-                log.warning("Error closing WebSocket connection: %s", e)
+            except Exception as err:
+                log.warning("Error closing WebSocket connection: %s", err)
             finally:
                 self._ws = None
                 self._rx_buffer = ""
 
-    def terminate(self):
+    def terminate(self) -> None:
+        """
+        Close the WebSocket connection immediately.
+        """
         self.close()
 
-    def send_message(self, message: str, ensure_newline: bool = True):
-        """Write raw payload string directly to WebSocket."""
-        if self._ws is None or not self._ws.connected:
+    def send_message(self, message: str, ensure_newline: bool = True) -> None:
+        """
+        Write a raw text payload string directly to the WebSocket.
+
+        Parameters
+        ----------
+        message : str
+            The text command string to transmit.
+        ensure_newline : bool, default=True
+            Set to True to append a newline character before transmission.
+
+        Raises
+        ------
+        WebSocketException
+            If the socket is not connected or transmission fails.
+        """
+        if not self.is_connected or self._ws is None:
             log.error("Cannot send message: WebSocket is not connected.")
             raise WebSocketException("WebSocket is not connected.")
 
@@ -80,26 +174,42 @@ class FluidNCWebsocketsDriver(DriverInterface):
                 payload_str += "\n"
 
             self._ws.send(payload_str)
-        except Exception as e:
-            log.error("Hardware disconnected during write via WebSocket: %s", e)
+        except (WebSocketException, socket.error, OSError) as err:
+            log.error("Network error during write via WebSocket: %s", err)
             self.close()
-            raise
+            raise WebSocketException("Write failure on WebSocket connection.") from err
 
-    def send(self, message: str):
+    def send(self, message: str) -> None:
         """
-        Intelligently send a command.
-        Infers if the message is a real-time command and skips the newline if so.
+        Route a command line and transmit it over WebSocket.
+
+        Parameters
+        ----------
+        message : str
+            The command string to evaluate and transmit.
         """
         clean_msg = message.strip()
         is_realtime = len(clean_msg) == 1 and clean_msg in self.REALTIME_COMMANDS
-
         self.send_message(message, ensure_newline=not is_realtime)
 
     def read_message(self) -> Optional[str]:
-        if self._ws is None or not self._ws.connected:
+        """
+        Read the next complete response line from the WebSocket buffer.
+
+        Returns
+        -------
+        Optional[str]
+            The received line string, or None if no full line exists.
+
+        Raises
+        ------
+        WebSocketException
+            If reading from the network connection fails.
+        """
+        if not self.is_connected or self._ws is None:
             return None
 
-        # Check if we already have a complete line in the buffer
+        # Process existing buffer content
         if "\n" in self._rx_buffer:
             line, _, remaining = self._rx_buffer.partition("\n")
             self._rx_buffer = remaining
@@ -107,7 +217,6 @@ class FluidNCWebsocketsDriver(DriverInterface):
             if clean_line:
                 return clean_line
 
-        # No complete line buffered, try to read from WebSocket
         try:
             data = self._ws.recv()
             if isinstance(data, bytes):
@@ -115,7 +224,11 @@ class FluidNCWebsocketsDriver(DriverInterface):
 
             self._rx_buffer += data
 
-            # Process the newly appended buffer
+            if len(self._rx_buffer) > self.MAX_RX_BUFFER_CHARS:
+                log.warning("RX buffer threshold exceeded. Flushing corrupt buffer.")
+                self._rx_buffer = ""
+                return None
+
             if "\n" in self._rx_buffer:
                 line, _, remaining = self._rx_buffer.partition("\n")
                 self._rx_buffer = remaining
@@ -124,22 +237,38 @@ class FluidNCWebsocketsDriver(DriverInterface):
                     return clean_line
 
         except (WebSocketTimeoutException, socket.timeout, TimeoutError):
-            # Normal timeout for a non-blocking read operation
             pass
-        except WebSocketException as e:
-            log.error("WebSocket error while reading: %s", e)
+        except (
+            WebSocketConnectionClosedException,
+            WebSocketException,
+            socket.error,
+            OSError,
+        ) as err:
+            log.error("WebSocket error during read: %s", err)
             self.close()
-            raise e
-        except Exception as e:
-            log.error("Unexpected hardware disconnect via WebSocket: %s", e)
-            self.close()
-            raise e
+            raise WebSocketException("Read failure on WebSocket connection.") from err
 
         return None
 
-    def setup_reporting(self):
+    def setup_reporting(self) -> None:
+        """
+        Send configuration commands to configure FluidNC status reporting.
+        """
         self.send_message("$10=2", ensure_newline=True)
 
-    @property
-    def safety_shutoff_command(self) -> str:
-        return self._safety_shutoff_command
+    def is_ack(self, response: str) -> bool:
+        """
+        Check if a response line is an acknowledgment signal.
+
+        Parameters
+        ----------
+        response : str
+            The raw response string received from hardware.
+
+        Returns
+        -------
+        bool
+            True if the line is 'ok' or starts with 'error:'; False otherwise.
+        """
+        resp = response.strip().lower()
+        return resp == "ok" or resp.startswith("error:")
