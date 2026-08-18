@@ -275,6 +275,16 @@ class FluidNCWebsocketsDriver(DriverInterface):
         """
         self.send_message("$10=2", ensure_newline=True)
 
+    def setup_auto_reporting(self, interval_ms: int = 250) -> None:
+        """
+        Configure auto status reporting on the corgi.
+
+        Args:
+            interval_ms: The reporting interval in milliseconds.
+                         Set to 0 to disable auto-reporting.
+        """
+        self.send_message(f"$Report/Interval={interval_ms}", ensure_newline=True)
+
     def is_ack(self, response: str) -> bool:
         """
         Check if a response line is an acknowledgment signal.

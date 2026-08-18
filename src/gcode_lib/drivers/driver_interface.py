@@ -97,6 +97,13 @@ class DriverInterface(ABC):
         pass
 
     @abstractmethod
+    def setup_auto_reporting(self) -> None:
+        """
+        Configure auto status reporting on the MCU.
+        """
+        pass
+
+    @abstractmethod
     def is_ack(self, response: str) -> bool:
         """
         Check if a hardware response line is a command acknowledgment.
