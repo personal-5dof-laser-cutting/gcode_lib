@@ -3,6 +3,7 @@ import time
 from typing import Optional
 
 import serial
+import sys
 from serial import SerialException, SerialTimeoutException
 
 from gcode_lib.drivers.driver_interface import DriverInterface
@@ -142,18 +143,49 @@ class FluidNCSerialDriver(DriverInterface):
         if self._serial is not None:
             try:
                 if self._serial.is_open:
+                    # Flush pending writes before closing gracefully
+                    self._serial.flush()
                     self._serial.close()
             except Exception as err:
                 log.warning("Error closing serial port %s: %s", self._port, err)
+                self.terminate()
             finally:
                 self._serial = None
                 self._rx_buffer.clear()
 
     def terminate(self) -> None:
         """
-        Close the serial port immediately.
+        Force close the serial port connection immediately.
         """
-        self.close()
+        if self._serial is not None:
+            try:
+                if self._serial.is_open:
+                    # Reset input and output hardware buffers immediately
+                    self._serial.reset_input_buffer()
+                    self._serial.reset_output_buffer()
+
+                    # 2. Cancel blocking IO operations (Platform-specific forced abort)
+                    if sys.platform == "win32":
+                        import win32file
+
+                        # Cancel pending asynchronous I/O on the underlying file handle
+                        win32file.CancelIo(self._serial.hComPort)
+                    else:
+                        # On Unix/Linux, breaking low-level read/write blocks by closing fd directly
+                        if hasattr(self._serial, "fd") and self._serial.fd is not None:
+                            try:
+                                import os
+
+                                os.close(self._serial.fd)
+                            except OSError:
+                                pass
+
+                    self._serial.close()
+            except Exception as err:
+                log.warning("Error terminating serial port %s: %s", self._port, err)
+            finally:
+                self._serial = None
+                self._rx_buffer.clear()
 
     def send_message(self, message: str, ensure_newline: bool = True) -> None:
         """
@@ -248,7 +280,7 @@ class FluidNCSerialDriver(DriverInterface):
 
     def setup_reporting(self) -> None:
         """
-        Send configuration commands to configure FluidNC status reporting.
+        Send command to configure FluidNC status reporting.
         """
         self.send_message("$10=2", ensure_newline=True)
 

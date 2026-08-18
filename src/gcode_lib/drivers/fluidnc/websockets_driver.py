@@ -131,22 +131,41 @@ class FluidNCWebsocketsDriver(DriverInterface):
 
     def close(self) -> None:
         """
-        Close the WebSocket connection gracefully.
+        Close the WebSocket connection gracefully via standard close handshake.
         """
         if self._ws is not None:
             try:
                 self._ws.close()
             except Exception as err:
                 log.warning("Error closing WebSocket connection: %s", err)
+                self.terminate()
             finally:
                 self._ws = None
                 self._rx_buffer = ""
 
     def terminate(self) -> None:
         """
-        Close the WebSocket connection immediately.
+        Force close the WebSocket connection immediately without waiting for handshake.
         """
-        self.close()
+        if self._ws is not None:
+            try:
+                # Drop the raw socket immediately at the TCP transport layer
+                if hasattr(self._ws, "sock") and self._ws.sock is not None:
+                    import socket
+
+                    try:
+                        # SHUT_RDWR disables both sends and receives, unblocking pending reads
+                        self._ws.sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    self._ws.sock.close()
+
+                self._ws.close()
+            except Exception as err:
+                log.warning("Error terminating WebSocket connection: %s", err)
+            finally:
+                self._ws = None
+                self._rx_buffer = ""
 
     def send_message(self, message: str, ensure_newline: bool = True) -> None:
         """
