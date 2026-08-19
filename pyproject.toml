@@ -1,24 +1,15 @@
 [project]
 name = "gcode-lib"
-version = "0.1.4"
+version = "0.1.5"
 description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "corvinkoegler", email = "corvin.koegler.hpi@gmail.com" }
-]
+authors = [{ name = "corvinkoegler", email = "corvin.koegler.hpi@gmail.com" }]
 requires-python = ">=3.11"
-dependencies = [
-    "pyserial>=3.5",
-    "pytest>=9.1.1",
-    "websocket-client>=1.9.0",
-]
+dependencies = ["pyserial>=3.5", "pytest>=9.1.1", "websocket-client>=1.9.0"]
 
 [build-system]
 requires = ["uv_build>=0.8.24,<0.9.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = [
-    "ruff>=0.14.11",
-    "websockets>=16.0",
-]
+dev = ["ruff>=0.14.11", "websockets>=16.0"]
