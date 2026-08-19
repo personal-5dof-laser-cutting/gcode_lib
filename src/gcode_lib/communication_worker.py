@@ -5,6 +5,7 @@ import time
 from collections import deque
 
 from gcode_lib.drivers.driver_interface import DriverInterface
+import gcode_lib.ipc_commands as ipc
 
 log = logging.getLogger(__name__)
 
@@ -81,23 +82,20 @@ class CommunicationWorker(multiprocessing.Process):
         log.info("Communication worker process started (PID: %s).", self.pid)
 
         try:
-            # 1. Hardware Connection Setup
             try:
                 self.driver.connect()
                 self.ready_event.set()
             except Exception:
                 log.exception("Failed to establish connection with driver.")
-                self._send_system_event("HARDWARE_DISCONNECTED")
+                self._send_system_event(ipc.HardwareDisconnected())
                 return
 
             watchdog_armed = False
             last_heartbeat = time.monotonic()
 
-            # 2. Main Event Loop
             while self._running.is_set():
                 work_done = False
 
-                # Process IPC commands from Proxy
                 try:
                     cmd = self.cmd_queue.get(timeout=0.002)
                     last_heartbeat = time.monotonic()
@@ -107,35 +105,32 @@ class CommunicationWorker(multiprocessing.Process):
                 except queue.Empty:
                     pass
 
-                # Check Watchdog Status
                 if watchdog_armed and (
                     time.monotonic() - last_heartbeat > self.timeout_sec
                 ):
                     log.error("Watchdog timeout! Triggering E-STOP.")
                     self.trigger_safety_shutdown()
-                    self._send_system_event("WATCHDOG_TIMEOUT")
+                    self._send_system_event(ipc.MainProcessTimeout())
                     break
 
-                # Read incoming hardware responses
                 if self._read_hardware_responses():
                     work_done = True
 
-                # Flush outbound G-code queue to driver
                 if self._flush_outbound_queue():
                     work_done = True
 
-                # Prevent high CPU spinning when idle
+                # INFO: Prevent high CPU spinning when idle
                 if not work_done:
                     time.sleep(0.001)
 
         except Exception:
             log.exception("Unhandled exception in worker process execution loop!")
             self.trigger_safety_shutdown()
-            self._send_system_event("HARDWARE_DISCONNECTED")
+            self._send_system_event(ipc.HardwareTimeout())
         finally:
             self._cleanup_driver()
 
-    def _process_ipc_command(self, cmd: object) -> None:
+    def _process_ipc_command(self, cmd: ipc.IPCCommand) -> None:
         """
         Parse and execute a single IPC command received from the proxy.
 
@@ -144,23 +139,33 @@ class CommunicationWorker(multiprocessing.Process):
         cmd : object
             The raw command tuple or string from the command queue.
         """
-        if isinstance(cmd, str):
-            action, args = cmd, ()
-        elif isinstance(cmd, tuple) and len(cmd) > 0:
-            action, args = cmd[0], cmd[1:]
-        else:
-            return
+        match cmd:
+            
+            case ipc.Heartbeat():
+                pass
 
-        if action == "SHUTDOWN":
-            self._running.clear()
-        elif action == "HEARTBEAT":
-            pass
-        elif action in ("QUEUE", "SEND"):
-            self._enqueue_gcode(args[0])
-        elif action == "SEND_REALTIME":
-            self.driver.send_message(args[0], ensure_newline=False)
-        elif action == "SETUP_REPORTING":
-            self.driver.setup_reporting()
+            case ipc.Send(message):
+                # INFO: 'message' is automatically bound to cmd.message by position
+                self.driver.send(message) 
+
+            case ipc.QueueMessage(message):
+                self._enqueue_message(message)
+
+            case ipc.SendMessage(message):
+                self.driver.send_message(message)
+
+            case ipc.SetupReporting(interval_ms):
+                self.driver.setup_reporting(interval_ms)
+
+            case ipc.Shutdown() | ipc.Terminate():
+                self._running.clear()
+
+            case ipc.HardwareTimeout() | ipc.MainProcessTimeout():
+                log.error("Connection lost!")
+                self._running.clear()
+
+            case _:
+                log.warning("Received unknown IPC command: %r", cmd)
 
     def _read_hardware_responses(self) -> bool:
         """
@@ -188,14 +193,14 @@ class CommunicationWorker(multiprocessing.Process):
                 except queue.Full:
                     log.error("Response queue full! Proxy process is unresponsive.")
                     self.trigger_safety_shutdown()
-                    self._send_system_event("HARDWARE_DISCONNECTED")
+                    self._send_system_event(ipc.HardwareTimeout())
                     self._running.clear()
                     break
 
         except Exception:
             log.exception("Unexpected error reading incoming message from driver.")
             self.trigger_safety_shutdown()
-            self._send_system_event("HARDWARE_DISCONNECTED")
+            self._send_system_event(ipc.HardwareTimeout())
             self._running.clear()
 
         return received_any
@@ -223,7 +228,8 @@ class CommunicationWorker(multiprocessing.Process):
                 except Exception:
                     log.exception("Failed to transmit command string to driver.")
                     self.trigger_safety_shutdown()
-                    self._send_system_event("HARDWARE_DISCONNECTED")
+                    # INFO: Could be a issue with the driver as well
+                    self._send_system_event(ipc.HardwareTimeout())
                     self._running.clear()
                     break
             else:
@@ -231,9 +237,9 @@ class CommunicationWorker(multiprocessing.Process):
 
         return sent_any
 
-    def _enqueue_gcode(self, message: str) -> None:
+    def _enqueue_message(self, message: str) -> None:
         """
-        Format and append a G-code command string to the outbound queue.
+        Format and append a command string to the outbound queue.
 
         Parameters
         ----------
@@ -244,7 +250,7 @@ class CommunicationWorker(multiprocessing.Process):
         if clean_msg:
             self._outbound_queue.append(clean_msg)
 
-    def _send_system_event(self, event_name: str) -> None:
+    def _send_system_event(self, command: ipc.IPCCommand) -> None:
         """
         Send an internal system notification message to the proxy response queue.
 
@@ -254,7 +260,7 @@ class CommunicationWorker(multiprocessing.Process):
             The system event name identifier string.
         """
         try:
-            self.response_queue.put(f"SYS:{event_name}", timeout=0.01)
+            self.response_queue.put(command, timeout=0.01)
         except queue.Full:
             pass
 

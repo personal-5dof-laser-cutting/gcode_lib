@@ -8,6 +8,7 @@ from typing import Optional
 
 from gcode_lib.drivers.driver_interface import DriverInterface
 from gcode_lib.communication_worker import CommunicationWorker
+import gcode_lib.ipc_commands as ipc
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class CommunicationProxy:
         log.debug("Heartbeat thread loop active.")
         while not self._stop_heartbeat.wait(self._heartbeat_interval):
             if self._worker and self._worker.is_alive():
-                self._worker.cmd_queue.put(("HEARTBEAT",))
+                self._worker.cmd_queue.put(ipc.Heartbeat())
             else:
                 log.error("Worker process died. Stopping heartbeat thread.")
                 break
@@ -187,9 +188,9 @@ class CommunicationProxy:
             log.debug("Waiting for heartbeat thread to join...")
             self._heartbeat_thread.join(timeout=1.0)
 
-        log.debug("Sending SHUTDOWN command to worker process.")
+        log.debug("Sending shtudown command to worker process.")
         try:
-            self._worker.cmd_queue.put(("SHUTDOWN",))
+            self._worker.cmd_queue.put(ipc.Shutdown())
             self._worker.join(timeout=2.0)
         except Exception as err:
             log.warning("Error during worker join: %s", err)
@@ -235,7 +236,7 @@ class CommunicationProxy:
         """
         self._verify_connection()
         log.debug("Queueing message to worker: %r", message)
-        self._worker.cmd_queue.put(("QUEUE", message))
+        self._worker.cmd_queue.put(ipc.QueueMessage(message))
 
     def send_message(self, message: str, ensure_newline: bool = True) -> None:
         """
@@ -255,7 +256,7 @@ class CommunicationProxy:
         """
         self._verify_connection()
         log.debug("Sending direct message to worker: %r", message)
-        self._worker.cmd_queue.put(("SEND_MESSAGE", message, ensure_newline))
+        self._worker.cmd_queue.put(ipc.SendMessage(message, ensure_newline))
 
     def send(self, message: str) -> None:
         """
@@ -273,7 +274,7 @@ class CommunicationProxy:
         """
         self._verify_connection()
         log.debug("Sending inferred message to worker: %r", message)
-        self._worker.cmd_queue.put(("SEND", message))
+        self._worker.cmd_queue.put(ipc.Send(message))
 
     def send_realtime(self, message: str) -> None:
         self._verify_connection()
@@ -308,7 +309,7 @@ class CommunicationProxy:
         except Empty:
             return None
 
-    def setup_reporting(self) -> None:
+    def setup_reporting(self, interval_ms: int = 0) -> None:
         """
         Send the telemetry setup instruction to the worker process.
 
@@ -319,7 +320,7 @@ class CommunicationProxy:
         """
         self._verify_connection()
         log.debug("Requesting SETUP_REPORTING from worker.")
-        self._worker.cmd_queue.put(("SETUP_REPORTING",))
+        self._worker.cmd_queue.put(ipc.SetupReporting(interval_ms))
 
     def _verify_connection(self) -> None:
         """

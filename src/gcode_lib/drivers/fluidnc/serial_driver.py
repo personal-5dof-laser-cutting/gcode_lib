@@ -164,7 +164,7 @@ class FluidNCSerialDriver(DriverInterface):
                     self._serial.reset_input_buffer()
                     self._serial.reset_output_buffer()
 
-                    # 2. Cancel blocking IO operations (Platform-specific forced abort)
+                    # Cancel blocking IO operations (Platform-specific forced abort)
                     if sys.platform == "win32":
                         import win32file
 
@@ -278,20 +278,18 @@ class FluidNCSerialDriver(DriverInterface):
 
         return None
 
-    def setup_reporting(self) -> None:
+    def setup_reporting(self, interval_ms: int=0) -> None:
         """
         Send command to configure FluidNC status reporting.
-        """
-        self.send_message("$10=2", ensure_newline=True)
 
-    def setup_auto_reporting(self, interval_ms: int = 250) -> None:
-        """
-        Configure auto status reporting on the corgi.
-
-        Args:
-            interval_ms: The reporting interval in milliseconds.
+        Parameters
+        ----------
+        interval_ms : str
+            The reporting interval in milliseconds.
                          Set to 0 to disable auto-reporting.
         """
+        self.send_message("$10=2", ensure_newline=True)
+        time.sleep(0.1)
         self.send_message(f"$Report/Interval={interval_ms}", ensure_newline=True)
 
     def is_ack(self, response: str) -> bool:

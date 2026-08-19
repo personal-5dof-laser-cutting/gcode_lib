@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 from serial import SerialException
 
 from gcode_lib.drivers.fluidnc.serial_driver import FluidNCSerialDriver
@@ -103,7 +103,10 @@ def test_send_routing_realtime_vs_standard(driver, mock_serial):
 
 def test_setup_reporting(driver, mock_serial):
     driver.setup_reporting()
-    mock_serial.write.assert_called_with(b"$10=2\n")
+    mock_serial.write.assert_has_calls([
+    call(b'$10=2\n'),
+    call(b'$Report/Interval=0\n')
+])
 
 
 def test_send_message_disconnected_raises_exception():

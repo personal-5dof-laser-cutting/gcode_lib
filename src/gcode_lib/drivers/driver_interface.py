@@ -90,16 +90,9 @@ class DriverInterface(ABC):
         pass
 
     @abstractmethod
-    def setup_reporting(self) -> None:
+    def setup_reporting(self, interval_ms: int) -> None:
         """
         Send initial configuration commands to enable hardware telemetry reporting.
-        """
-        pass
-
-    @abstractmethod
-    def setup_auto_reporting(self) -> None:
-        """
-        Configure auto status reporting on the MCU.
         """
         pass
 

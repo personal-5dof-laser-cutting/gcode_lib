@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gcode_lib.communication_worker import CommunicationWorker
+import gcode_lib.ipc_commands as ipc
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def worker(mock_driver):
 
 
 def test_successful_connect_and_shutdown(worker, mock_driver):
-    worker.cmd_queue.put("SHUTDOWN")
+    worker.cmd_queue.put(ipc.Shutdown())
     worker.run()
 
     assert worker.ready_event.is_set()
@@ -47,7 +48,7 @@ def test_connect_failure_notifies_proxy(worker, mock_driver):
 
     worker.run()
 
-    assert worker.response_queue.get() == "SYS:HARDWARE_DISCONNECTED"
+    assert isinstance(worker.response_queue.get(), ipc.HardwareTimeout)
     mock_driver.close.assert_called_once()
 
 
@@ -57,8 +58,8 @@ def test_connect_failure_notifies_proxy(worker, mock_driver):
 
 
 def test_buffer_management(worker, mock_driver):
-    worker.cmd_queue.put(("QUEUE", "G0 X10"))
-    worker.cmd_queue.put("SHUTDOWN")
+    worker.cmd_queue.put(ipc.QueueMessage("G0 X10"))
+    worker.cmd_queue.put(ipc.Shutdown())
 
     worker.run()
 
@@ -73,8 +74,8 @@ def test_ack_frees_buffer(worker, mock_driver):
 
     mock_driver.read_message.side_effect = ["ok", None, None]
 
-    worker.cmd_queue.put("HEARTBEAT")
-    worker.cmd_queue.put("SHUTDOWN")
+    worker.cmd_queue.put(ipc.Heartbeat())
+    worker.cmd_queue.put(ipc.Shutdown())
 
     worker.run()
 
@@ -88,8 +89,8 @@ def test_buffer_capacity_holds_overflowing_commands(worker, mock_driver):
     worker._pending_line_lengths.append(8)  # Only 2 bytes remaining
 
     # Attempting to queue a 7 byte command ("G0 X10\n") should hold
-    worker.cmd_queue.put(("QUEUE", "G0 X10"))
-    worker.cmd_queue.put("SHUTDOWN")
+    worker.cmd_queue.put(ipc.QueueMessage("G0 X10"))
+    worker.cmd_queue.put(ipc.Shutdown())
 
     worker.run()
 
@@ -107,12 +108,12 @@ def test_hardware_disconnect_handling(worker, mock_driver):
 
     worker.run()
 
-    assert worker.response_queue.get() == "SYS:HARDWARE_DISCONNECTED"
+    assert isinstance(worker.response_queue.get(), ipc.HardwareTimeout)
     mock_driver.close.assert_called_once()
 
 
 def test_watchdog_triggers_estop(worker, mock_driver):
-    worker.cmd_queue.put("HEARTBEAT")
+    worker.cmd_queue.put(ipc.Heartbeat())
 
     original_monotonic = time.monotonic
 
@@ -136,4 +137,4 @@ def test_watchdog_triggers_estop(worker, mock_driver):
     # Safety shutoff uses updated ensure_newline parameter
     mock_driver.send_message.assert_called_with("\x18", ensure_newline=False)
     mock_driver.terminate.assert_called_once()
-    assert worker.response_queue.get() == "SYS:WATCHDOG_TIMEOUT"
+    assert isinstance(worker.response_queue.get(), ipc.MainProcessTimeout)
