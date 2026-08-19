@@ -276,11 +276,6 @@ class CommunicationProxy:
         log.debug("Sending inferred message to worker: %r", message)
         self._worker.cmd_queue.put(ipc.Send(message))
 
-    def send_realtime(self, message: str) -> None:
-        self._verify_connection()
-        log.debug("Sending inferred realtime message to worker: %r", message)
-        self._worker.cmd_queue.put(("SEND_REALTIME", message))
-
     def read_message(self, timeout: Optional[float] = None) -> Optional[str]:
         """
         Fetch the next incoming message from the worker response queue.
