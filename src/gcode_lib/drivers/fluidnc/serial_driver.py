@@ -268,7 +268,7 @@ class FluidNCSerialDriver(DriverInterface):
                 line_bytes, _, remaining = self._rx_buffer.partition(b"\n")
                 self._rx_buffer = bytearray(remaining)
                 line = line_bytes.decode("utf-8", errors="replace").strip()
-                if line:
+                if line and not self.is_ack(line):
                     return line
 
         except (SerialException, OSError) as err:
