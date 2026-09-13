@@ -103,10 +103,9 @@ def test_send_routing_realtime_vs_standard(driver, mock_serial):
 
 def test_setup_reporting(driver, mock_serial):
     driver.setup_reporting()
-    mock_serial.write.assert_has_calls([
-    call(b'$10=2\n'),
-    call(b'$Report/Interval=0\n')
-])
+    mock_serial.write.assert_has_calls(
+        [call(b"$10=2\n"), call(b"$Report/Interval=0\n")]
+    )
 
 
 def test_send_message_disconnected_raises_exception():
@@ -121,31 +120,32 @@ def test_send_message_disconnected_raises_exception():
 
 
 def test_read_message_complete_line(driver, mock_serial):
-    mock_serial.in_waiting = 3
-    mock_serial.read.return_value = b"ok\n"
+    # INFO: Don't use 'ok\n' ACK messages are filtered
+    mock_serial.in_waiting = 6
+    mock_serial.read.return_value = b"error\n"
 
     msg = driver.read_message()
-    assert msg == "ok"
+    assert msg == "error"
 
 
 def test_read_message_partial_buffering(driver, mock_serial):
-    mock_serial.in_waiting = 1
-    mock_serial.read.return_value = b"o"
+    mock_serial.in_waiting = 3
+    mock_serial.read.return_value = b"err"
     assert driver.read_message() is None
 
-    mock_serial.in_waiting = 2
-    mock_serial.read.return_value = b"k\n"
-    assert driver.read_message() == "ok"
+    mock_serial.in_waiting = 3
+    mock_serial.read.return_value = b"or\n"
+    assert driver.read_message() == "error"
 
 
 def test_read_message_multiple_lines_in_buffer(driver, mock_serial):
-    mock_serial.in_waiting = 18
-    mock_serial.read.return_value = b"<Idle|WPos:0,0>\nok\n"
+    mock_serial.in_waiting = 36
+    mock_serial.read.return_value = b"<Idle|WPos:0,0>\nerror\n<Idle|WPos:0,0>\n"
 
     assert driver.read_message() == "<Idle|WPos:0,0>"
+    assert driver.read_message() == "error"
+    assert driver.read_message() == "<Idle|WPos:0,0>"
 
-    mock_serial.in_waiting = 0
-    assert driver.read_message() == "ok"
 
 
 def test_read_message_buffer_overflow_flushes_corrupt_data(driver, mock_serial):
@@ -159,12 +159,12 @@ def test_read_message_buffer_overflow_flushes_corrupt_data(driver, mock_serial):
 
 def test_read_message_replaces_invalid_utf8_bytes(driver, mock_serial):
     mock_serial.in_waiting = 6
-    mock_serial.read.return_value = b"\xff\xfeok\n"
+    mock_serial.read.return_value = b"\xff\xfeerror\n"
 
     # Should decode invalid UTF-8 bytes gracefully using replacement characters
     msg = driver.read_message()
     assert msg is not None
-    assert "ok" in msg
+    assert "error" in msg
 
 
 def test_hardware_disconnect_during_read_raises_error(driver, mock_serial):
